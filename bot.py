@@ -26,6 +26,8 @@ dp = Dispatcher()
 
 profiles: dict[int, dict] = {}
 seen_profiles: dict[int, set[int]] = {}
+skipped_history: dict[int, list[int]] = {}
+undo_credits: dict[int, int] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
 match_dates: dict[tuple[int, int], str] = {}
@@ -907,6 +909,7 @@ async def on_swipe(callback: types.CallbackQuery):
         else:
             await callback.message.answer("❤️ Лайк отправлен")
     else:
+        skipped_history.setdefault(viewer_id, []).append(target_id)
         await callback.message.answer("👎 Пропущено")
 
     next_id = get_next_candidate_id(viewer_id)
@@ -915,6 +918,44 @@ async def on_swipe(callback: types.CallbackQuery):
     else:
         await send_candidate(callback.message, viewer_id, next_id)
 
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "use_undo_skip")
+async def on_use_undo_skip(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    uid = callback.from_user.id
+    credits = undo_credits.get(uid, 0)
+    if credits <= 0:
+        await callback.message.answer(
+            "Нет доступных откатов дизлайка. Оформить можно в /donate."
+        )
+        await callback.answer()
+        return
+
+    history = skipped_history.get(uid, [])
+    restored_id: int | None = None
+    while history:
+        cand_id = history.pop()
+        if cand_id in profiles and not is_blocked_between(uid, cand_id):
+            restored_id = cand_id
+            break
+
+    if restored_id is None:
+        await callback.message.answer(
+            "Не нашлось подходящей пропущенной анкеты для возврата."
+        )
+        await callback.answer()
+        return
+
+    undo_credits[uid] = credits - 1
+    seen_profiles.setdefault(uid, set()).discard(restored_id)
+    await callback.message.answer(
+        f"🔄 Возвращаю последнюю пропущенную анкету. Осталось откатов: {undo_credits[uid]}."
+    )
+    await send_candidate(callback.message, uid, restored_id)
     await callback.answer()
 
 
@@ -1531,11 +1572,24 @@ async def on_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 @dp.message(F.successful_payment)
 async def on_successful_payment(message: types.Message):
     payment = message.successful_payment
-    if not payment:
+    if not payment or not message.from_user:
         return
+    uid = message.from_user.id
     if payment.invoice_payload == "buy_undo_skip":
+        undo_credits[uid] = undo_credits.get(uid, 0) + 1
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Вернуть последнюю пропущенную анкету",
+                        callback_data="use_undo_skip",
+                    )
+                ]
+            ]
+        )
         await message.answer(
-            "🔄 Оплата прошла! Можешь вернуть пропущенную анкету."
+            f"🔄 Оплата прошла! Начислен откат дизлайка (доступно: {undo_credits[uid]}).",
+            reply_markup=kb,
         )
 
 
