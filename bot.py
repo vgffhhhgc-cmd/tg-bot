@@ -20,6 +20,7 @@ class RegForm(StatesGroup):
     waiting_city = State()
     waiting_looking_for = State()
     waiting_bio = State()
+    waiting_photo = State()
 
 
 def keepalive() -> None:
@@ -141,17 +142,33 @@ async def on_bio(message: types.Message, state: FSMContext):
         await message.answer("Напиши описание текстом.")
         return
     await state.update_data(bio=bio)
+    await state.set_state(RegForm.waiting_photo)
+    await message.answer("Скинь своё фото для анкеты:")
+
+
+@dp.message(RegForm.waiting_photo, F.photo)
+async def on_photo(message: types.Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    await state.update_data(photo_id=photo_id)
     data = await state.get_data()
     await state.clear()
-    await message.answer(
-        f"Записала:\n"
-        f"Пол: {data.get('gender')}\n"
-        f"Имя: {data.get('name')}\n"
-        f"Возраст: {data.get('age')}\n"
-        f"Город: {data.get('city')}\n"
-        f"Ищет: {data.get('looking_for')}\n"
-        f"О себе: {data.get('bio')}"
+    await message.answer_photo(
+        photo=data.get("photo_id"),
+        caption=(
+            f"Записала:\n"
+            f"Пол: {data.get('gender')}\n"
+            f"Имя: {data.get('name')}\n"
+            f"Возраст: {data.get('age')}\n"
+            f"Город: {data.get('city')}\n"
+            f"Ищет: {data.get('looking_for')}\n"
+            f"О себе: {data.get('bio')}"
+        ),
     )
+
+
+@dp.message(RegForm.waiting_photo)
+async def on_photo_invalid(message: types.Message):
+    await message.answer("Нужно отправить именно картинку/фото, а не текст.")
 
 
 @dp.message(Command("me"))
