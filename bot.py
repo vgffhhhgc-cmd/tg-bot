@@ -15,6 +15,8 @@ dp = Dispatcher()
 
 # Временное хранилище анкет в памяти: {user_id: {gender, name, age, city, looking_for, bio, photo_id}}
 profiles: dict[int, dict] = {}
+# Кого уже просмотрел пользователь: {viewer_id: set_of_target_ids}
+seen_profiles: dict[int, set[int]] = {}
 
 
 class RegForm(StatesGroup):
@@ -41,15 +43,38 @@ def keepalive() -> None:
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
-def format_profile_caption(profile: dict) -> str:
+def format_profile_caption(profile: dict, header: str = "🃏 Твой козырь") -> str:
     return (
-        f"🃏 Твой козырь:\n"
-        f"Пол: {profile.get('gender')}\n"
-        f"Имя: {profile.get('name')}\n"
-        f"Возраст: {profile.get('age')}\n"
+        f"{header}:\n"
+        f"Имя: {profile.get('name')}, {profile.get('age')}\n"
         f"Город: {profile.get('city')}\n"
-        f"Ищет: {profile.get('looking_for')}\n"
+        f"Пол: {profile.get('gender')} | Ищет: {profile.get('looking_for')}\n"
         f"О себе: {profile.get('bio')}"
+    )
+
+
+def get_next_candidate_id(viewer_id: int) -> int | None:
+    viewed = seen_profiles.setdefault(viewer_id, set())
+    for uid in profiles:
+        if uid != viewer_id and uid not in viewed:
+            return uid
+    return None
+
+
+async def send_candidate(message: types.Message, viewer_id: int, target_id: int) -> None:
+    candidate = profiles[target_id]
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="❤️", callback_data=f"swipe_like:{target_id}"),
+                InlineKeyboardButton(text="👎", callback_data=f"swipe_skip:{target_id}"),
+            ]
+        ]
+    )
+    await message.answer_photo(
+        photo=candidate["photo_id"],
+        caption=format_profile_caption(candidate, header="👀 Твой типаж"),
+        reply_markup=keyboard,
     )
 
 
@@ -205,7 +230,39 @@ async def cmd_me(message: types.Message):
 
 @dp.message(Command("find"))
 async def cmd_find(message: types.Message):
-    await message.answer("👀 Твой типаж")
+    if not message.from_user:
+        return
+    viewer_id = message.from_user.id
+    if viewer_id not in profiles:
+        await message.answer("Сначала заполни свою анкету через /start.")
+        return
+    candidate_id = get_next_candidate_id(viewer_id)
+    if candidate_id is None:
+        await message.answer("👀 Твой типаж: пока новых анкет нет.")
+        return
+    await send_candidate(message, viewer_id, candidate_id)
+
+
+@dp.callback_query(F.data.startswith(("swipe_like:", "swipe_skip:")))
+async def on_swipe(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    viewer_id = callback.from_user.id
+    action, raw_target_id = callback.data.split(":", 1)
+    target_id = int(raw_target_id)
+
+    seen_profiles.setdefault(viewer_id, set()).add(target_id)
+    verdict = "❤️ Лайк отправлен" if action == "swipe_like" else "👎 Пропущено"
+    await callback.message.answer(verdict)
+
+    next_id = get_next_candidate_id(viewer_id)
+    if next_id is None:
+        await callback.message.answer("Анкеты на сегодня закончились.")
+    else:
+        await send_candidate(callback.message, viewer_id, next_id)
+
+    await callback.answer()
 
 
 @dp.message(Command("matches"))
