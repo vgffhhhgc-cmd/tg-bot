@@ -17,6 +17,7 @@ dp = Dispatcher()
 class RegForm(StatesGroup):
     waiting_name = State()
     waiting_age = State()
+    waiting_city = State()
 
 
 def keepalive() -> None:
@@ -90,13 +91,25 @@ async def on_age(message: types.Message, state: FSMContext):
         await message.answer("Доступно только от 16 лет. Введи корректный возраст.")
         return
     await state.update_data(age=age)
+    await state.set_state(RegForm.waiting_city)
+    await message.answer("Из какого ты города?")
+
+
+@dp.message(RegForm.waiting_city)
+async def on_city(message: types.Message, state: FSMContext):
+    city = (message.text or "").strip()
+    if not city:
+        await message.answer("Напиши название города текстом.")
+        return
+    await state.update_data(city=city)
     data = await state.get_data()
     await state.clear()
     await message.answer(
         f"Записала:\n"
         f"Пол: {data.get('gender')}\n"
         f"Имя: {data.get('name')}\n"
-        f"Возраст: {data.get('age')}"
+        f"Возраст: {data.get('age')}\n"
+        f"Город: {data.get('city')}"
     )
 
 
