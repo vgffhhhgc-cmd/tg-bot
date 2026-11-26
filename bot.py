@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
 import os
 import threading
 import time
@@ -22,6 +23,8 @@ EXTRA_LIKES_PACK_SIZE = 10
 BOOST_DURATION_SEC = 24 * 60 * 60
 VIP_DURATION_SEC = 30 * 24 * 60 * 60
 SUPPORT_STARS_AMOUNT = 50
+PEEK_LIKES_STARS_AMOUNT = 15
+STATE_FILE_PATH = os.environ.get("STATE_FILE_PATH", "bot_state.json")
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
 
@@ -90,11 +93,139 @@ class SosForm(StatesGroup):
     waiting_message = State()
 
 
+def _pair_to_str(pair: tuple[int, int]) -> str:
+    return f"{pair[0]}:{pair[1]}"
+
+
+def _str_to_pair(key: str) -> tuple[int, int] | None:
+    parts = key.split(":", 1)
+    if len(parts) != 2 or not parts[0].lstrip("-").isdigit() or not parts[1].lstrip("-").isdigit():
+        return None
+    return (int(parts[0]), int(parts[1]))
+
+
+def save_state() -> None:
+    try:
+        payload = {
+            "profiles": {str(k): v for k, v in profiles.items()},
+            "seen_profiles": {str(k): list(v) for k, v in seen_profiles.items()},
+            "skipped_history": {str(k): list(v) for k, v in skipped_history.items()},
+            "undo_credits": {str(k): v for k, v in undo_credits.items()},
+            "extra_likes": {str(k): v for k, v in extra_likes.items()},
+            "boosted_until": {str(k): v for k, v in boosted_until.items()},
+            "vip_until": {str(k): v for k, v in vip_until.items()},
+            "supporter_donations": {str(k): v for k, v in supporter_donations.items()},
+            "likes_given": {str(k): list(v) for k, v in likes_given.items()},
+            "matches_by_user": {str(k): list(v) for k, v in matches_by_user.items()},
+            "match_dates": {_pair_to_str(k): v for k, v in match_dates.items()},
+            "user_titles": {str(k): v for k, v in user_titles.items()},
+            "active_chats": {str(k): v for k, v in active_chats.items()},
+            "blocked_users": {str(k): list(v) for k, v in blocked_users.items()},
+            "contact_requests": {_pair_to_str(k): v for k, v in contact_requests.items()},
+            "user_filters": {str(k): v for k, v in user_filters.items()},
+            "chat_history": {_pair_to_str(k): v for k, v in chat_history.items()},
+            "reports_by_id": {str(k): v for k, v in reports_by_id.items()},
+            "report_counter": report_counter,
+            "user_warnings": {str(k): v for k, v in user_warnings.items()},
+            "user_restrictions": {str(k): v for k, v in user_restrictions.items()},
+            "sos_requests": sos_requests,
+        }
+        tmp_path = f"{STATE_FILE_PATH}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, STATE_FILE_PATH)
+    except Exception:
+        pass
+
+
+def load_state() -> None:
+    global report_counter
+    if not os.path.exists(STATE_FILE_PATH):
+        return
+    try:
+        with open(STATE_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return
+
+        for k, v in data.get("profiles", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, dict):
+                profiles[int(k)] = v
+        for k, v in data.get("seen_profiles", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, list):
+                seen_profiles[int(k)] = {int(x) for x in v}
+        for k, v in data.get("skipped_history", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, list):
+                skipped_history[int(k)] = [int(x) for x in v]
+        for k, v in data.get("undo_credits", {}).items():
+            if k.lstrip("-").isdigit():
+                undo_credits[int(k)] = int(v)
+        for k, v in data.get("extra_likes", {}).items():
+            if k.lstrip("-").isdigit():
+                extra_likes[int(k)] = int(v)
+        for k, v in data.get("boosted_until", {}).items():
+            if k.lstrip("-").isdigit():
+                boosted_until[int(k)] = float(v)
+        for k, v in data.get("vip_until", {}).items():
+            if k.lstrip("-").isdigit():
+                vip_until[int(k)] = float(v)
+        for k, v in data.get("supporter_donations", {}).items():
+            if k.lstrip("-").isdigit():
+                supporter_donations[int(k)] = int(v)
+        for k, v in data.get("likes_given", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, list):
+                likes_given[int(k)] = {int(x) for x in v}
+        for k, v in data.get("matches_by_user", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, list):
+                matches_by_user[int(k)] = {int(x) for x in v}
+        for k, v in data.get("match_dates", {}).items():
+            pair = _str_to_pair(k)
+            if pair and isinstance(v, str):
+                match_dates[pair] = v
+        for k, v in data.get("user_titles", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, str):
+                user_titles[int(k)] = v
+        for k, v in data.get("active_chats", {}).items():
+            if k.lstrip("-").isdigit():
+                active_chats[int(k)] = int(v)
+        for k, v in data.get("blocked_users", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, list):
+                blocked_users[int(k)] = {int(x) for x in v}
+        for k, v in data.get("contact_requests", {}).items():
+            pair = _str_to_pair(k)
+            if pair and isinstance(v, dict):
+                contact_requests[pair] = v
+        for k, v in data.get("user_filters", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, dict):
+                user_filters[int(k)] = v
+        for k, v in data.get("chat_history", {}).items():
+            pair = _str_to_pair(k)
+            if pair and isinstance(v, list):
+                chat_history[pair] = v
+        for k, v in data.get("reports_by_id", {}).items():
+            if k.isdigit() and isinstance(v, dict):
+                reports_by_id[int(k)] = v
+        if isinstance(data.get("report_counter"), int):
+            report_counter = data["report_counter"]
+        for k, v in data.get("user_warnings", {}).items():
+            if k.lstrip("-").isdigit():
+                user_warnings[int(k)] = int(v)
+        for k, v in data.get("user_restrictions", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, dict):
+                user_restrictions[int(k)] = v
+        if isinstance(data.get("sos_requests"), list):
+            sos_requests.extend(data["sos_requests"])
+    except Exception:
+        pass
+
+
 def is_user_boosted(user_id: int) -> bool:
     until = boosted_until.get(user_id, 0)
     if until > time.time():
         return True
-    boosted_until.pop(user_id, None)
+    if user_id in boosted_until:
+        boosted_until.pop(user_id, None)
+        save_state()
     return False
 
 
@@ -102,7 +233,9 @@ def is_user_vip(user_id: int) -> bool:
     until = vip_until.get(user_id, 0)
     if until > time.time():
         return True
-    vip_until.pop(user_id, None)
+    if user_id in vip_until:
+        vip_until.pop(user_id, None)
+        save_state()
     return False
 
 
@@ -122,6 +255,7 @@ def record_chat_message(sender_id: int, receiver_id: int, text: str) -> None:
     )
     if len(bucket) > 30:
         del bucket[:-30]
+    save_state()
 
 
 def get_restriction_status(user_id: int) -> str | None:
@@ -135,6 +269,7 @@ def get_restriction_status(user_id: int) -> str | None:
         dt_str = datetime.fromtimestamp(until).strftime("%d.%m.%Y %H:%M")
         return f"Аккаунт временно ограничен до {dt_str}."
     user_restrictions.pop(user_id, None)
+    save_state()
     return None
 
 
@@ -151,6 +286,7 @@ def get_default_filters() -> dict:
 def get_user_filter(user_id: int) -> dict:
     if user_id not in user_filters:
         user_filters[user_id] = get_default_filters()
+        save_state()
     return user_filters[user_id]
 
 
@@ -297,6 +433,7 @@ def apply_block(blocker_id: int, target_id: int) -> None:
         active_chats.pop(target_id, None)
     contact_requests.pop((blocker_id, target_id), None)
     contact_requests.pop((target_id, blocker_id), None)
+    save_state()
 
 
 def get_match_date(user_a: int, user_b: int) -> str:
@@ -310,6 +447,7 @@ def record_match(user_a: int, user_b: int) -> None:
     pair = get_pair_key(user_a, user_b)
     if pair not in match_dates:
         match_dates[pair] = datetime.now().strftime("%d.%m.%Y")
+    save_state()
 
 
 def get_pending_request(requester_id: int, target_id: int) -> dict | None:
@@ -318,6 +456,7 @@ def get_pending_request(requester_id: int, target_id: int) -> dict | None:
         return None
     if time.time() - req.get("created_at", 0) > CONTACT_REQUEST_TTL:
         req["status"] = "expired"
+        save_state()
         return None
     return req
 
@@ -411,6 +550,7 @@ def format_profile_caption(
     header: str = "🃏 Твой козырь",
     user_id: int | None = None,
     match_date: str | None = None,
+    include_bonuses: bool = False,
 ) -> str:
     vip_badge = " 🖤 VIP" if (user_id is not None and is_user_vip(user_id)) else ""
     title_line = ""
@@ -423,13 +563,75 @@ def format_profile_caption(
         )
         vip_line = f"\nVIP активен до: {vip_until_str}"
     date_line = f"\nДата мэтча: {match_date}" if match_date else ""
+    bonuses_line = ""
+    if include_bonuses and user_id is not None:
+        bonuses_line = (
+            f"\nБонусы: доп. лайков — {extra_likes.get(user_id, 0)}, "
+            f"откатов дизлайка — {undo_credits.get(user_id, 0)}"
+        )
+        donated_total = supporter_donations.get(user_id, 0)
+        if donated_total > 0:
+            bonuses_line += f"\nПоддержал проект на: {donated_total} ⭐"
     return (
         f"{header}{vip_badge}:\n"
         f"Имя: {profile.get('name')}, {profile.get('age')}\n"
         f"Город: {profile.get('city')}\n"
         f"Пол: {profile.get('gender')} | Ищет/интересы: {profile.get('looking_for')}\n"
-        f"О себе: {profile.get('bio')}{title_line}{vip_line}{date_line}"
+        f"О себе: {profile.get('bio')}{title_line}{vip_line}{bonuses_line}{date_line}"
     )
+
+
+def get_incoming_likers(user_id: int) -> list[int]:
+    already_matched = matches_by_user.get(user_id, set())
+    already_liked = likes_given.get(user_id, set())
+    likers: list[int] = []
+    for sender_id, targets in likes_given.items():
+        if sender_id == user_id or sender_id not in profiles:
+            continue
+        if user_id not in targets:
+            continue
+        if sender_id in already_matched or sender_id in already_liked:
+            continue
+        if is_blocked_between(user_id, sender_id):
+            continue
+        if get_restriction_status(sender_id) is not None:
+            continue
+        likers.append(sender_id)
+    return likers
+
+
+async def send_incoming_likes_list(message: types.Message, user_id: int) -> None:
+    likers = get_incoming_likers(user_id)
+    if not likers:
+        await message.answer(
+            "👁️ Пока новых невзаимных лайков нет — либо всех уже свайпнула, "
+            "либо никто ещё не успел зацепить."
+        )
+        return
+    await message.answer(
+        f"👁️ Тебя лайкнули ({len(likers)}):"
+    )
+    for sender_id in likers[:10]:
+        prof = profiles[sender_id]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❤️ Лайкнуть в ответ",
+                        callback_data=f"peek_like_back:{sender_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="👀 Анкета",
+                        callback_data=f"peek_view:{sender_id}",
+                    ),
+                ]
+            ]
+        )
+        await message.answer(
+            f"• {prof.get('name')}, {prof.get('age')} — {prof.get('city')}\n"
+            f"О себе: {prof.get('bio')}",
+            reply_markup=kb,
+        )
 
 
 def get_next_candidate_id(viewer_id: int) -> int | None:
@@ -564,6 +766,7 @@ async def enter_anon_chat(message: types.Message, user_id: int, partner_id: int)
         return
     active_chats[user_id] = partner_id
     active_chats[partner_id] = user_id
+    save_state()
     partner_name = profiles.get(partner_id, {}).get("name", "собеседником")
     text = (
         f"Комната с {partner_name}:\n\n"
@@ -635,6 +838,7 @@ async def create_and_dispatch_report(
         "messages_snapshot": recent_msgs,
         "status": "pending",
     }
+    save_state()
 
     for admin_id in ADMIN_IDS:
         prio_tag = "🔥 ПРИОРИТЕТНАЯ ПРОВЕРКА\n" if high_priority else ""
@@ -720,6 +924,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         get_user_filter(uid)
         if uid in profiles and message.from_user.username:
             profiles[uid]["username"] = message.from_user.username
+            save_state()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="😎 Погнали, я в деле", callback_data="reg_start")]
@@ -852,10 +1057,11 @@ async def on_photo(message: types.Message, state: FSMContext):
             "photo_id": photo_id,
             "username": username,
         }
+        save_state()
 
     await message.answer_photo(
         photo=photo_id,
-        caption=format_profile_caption(data, user_id=uid),
+        caption=format_profile_caption(data, user_id=uid, include_bonuses=True),
     )
 
 
@@ -875,7 +1081,9 @@ async def cmd_me(message: types.Message):
         return
     await message.answer_photo(
         photo=profile["photo_id"],
-        caption=format_profile_caption(profile, user_id=user_id),
+        caption=format_profile_caption(
+            profile, user_id=user_id, include_bonuses=True
+        ),
     )
 
 
@@ -906,6 +1114,7 @@ async def on_find_replay_seen(callback: types.CallbackQuery):
         return
     uid = callback.from_user.id
     seen_profiles[uid] = set()
+    save_state()
     candidate_id = get_next_candidate_id(uid)
     if candidate_id is None:
         await send_no_candidates_prompt(callback.message, uid)
@@ -939,6 +1148,7 @@ async def on_swipe(callback: types.CallbackQuery):
             record_match(viewer_id, target_id)
             active_chats[viewer_id] = target_id
             active_chats[target_id] = viewer_id
+            save_state()
             target_profile = profiles.get(target_id, {})
             await callback.message.answer(
                 f"🍒 Взаимка с {target_profile.get('name', 'пользователем')}!"
@@ -948,13 +1158,16 @@ async def on_swipe(callback: types.CallbackQuery):
             bonus_left = extra_likes.get(viewer_id, 0)
             if bonus_left > 0:
                 extra_likes[viewer_id] = bonus_left - 1
+                save_state()
                 await callback.message.answer(
                     f"❤️ Лайк отправлен (доп. лайков осталось: {extra_likes[viewer_id]})"
                 )
             else:
+                save_state()
                 await callback.message.answer("❤️ Лайк отправлен")
     else:
         skipped_history.setdefault(viewer_id, []).append(target_id)
+        save_state()
         await callback.message.answer("👎 Пропущено")
 
     next_id = get_next_candidate_id(viewer_id)
@@ -989,6 +1202,7 @@ async def on_use_undo_skip(callback: types.CallbackQuery):
             break
 
     if restored_id is None:
+        save_state()
         await callback.message.answer(
             "Не нашлось подходящей пропущенной анкеты для возврата."
         )
@@ -997,10 +1211,67 @@ async def on_use_undo_skip(callback: types.CallbackQuery):
 
     undo_credits[uid] = credits - 1
     seen_profiles.setdefault(uid, set()).discard(restored_id)
+    save_state()
     await callback.message.answer(
         f"🔄 Возвращаю последнюю пропущенную анкету. Осталось откатов: {undo_credits[uid]}."
     )
     await send_candidate(callback.message, uid, restored_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("peek_view:"))
+async def on_peek_view(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    prof = profiles.get(target_id)
+    if not prof:
+        await callback.message.answer("Анкета больше недоступна.")
+        await callback.answer()
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❤️ Лайкнуть в ответ",
+                    callback_data=f"peek_like_back:{target_id}",
+                )
+            ]
+        ]
+    )
+    await callback.message.answer_photo(
+        photo=prof["photo_id"],
+        caption=format_profile_caption(prof, header="👁️ Лайкнул(а)", user_id=target_id),
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("peek_like_back:"))
+async def on_peek_like_back(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    viewer_id = callback.from_user.id
+    target_id = int(callback.data.split(":", 1)[1])
+    if target_id not in profiles or is_blocked_between(viewer_id, target_id):
+        await callback.message.answer("Анкета недоступна.")
+        await callback.answer()
+        return
+    likes_given.setdefault(viewer_id, set()).add(target_id)
+    seen_profiles.setdefault(viewer_id, set()).add(target_id)
+    if viewer_id in likes_given.get(target_id, set()):
+        record_match(viewer_id, target_id)
+        active_chats[viewer_id] = target_id
+        active_chats[target_id] = viewer_id
+        save_state()
+        target_name = profiles[target_id].get("name", "пользователем")
+        await callback.message.answer(f"🍒 Взаимка с {target_name}!")
+        await enter_anon_chat(callback.message, viewer_id, target_id)
+    else:
+        save_state()
+        await callback.message.answer("❤️ Лайк отправлен.")
     await callback.answer()
 
 
@@ -1122,7 +1393,7 @@ async def on_block_after_report(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "blk_skip_after_rep")
 async def on_skip_block_after_report(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("Хорошо, блокировать пока не стала.")
+        await callback.message.answer("Хорошо, блокировать пока не будем.")
     await callback.answer()
 
 
@@ -1153,6 +1424,7 @@ async def on_sos_text(message: types.Message, state: FSMContext):
         "time": datetime.now().strftime("%d.%m.%Y %H:%M"),
     }
     sos_requests.append(entry)
+    save_state()
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(
@@ -1306,6 +1578,7 @@ async def on_mod_decision(callback: types.CallbackQuery):
         rep["status"] = "rejected"
         verdict_label = "Жалоба отклонена."
 
+    save_state()
     await callback.message.answer(f"Жалоба №{rep_id}: {verdict_label}")
 
     try:
@@ -1398,6 +1671,7 @@ async def on_match_delete_yes(callback: types.CallbackQuery):
         active_chats.pop(user_id, None)
     if active_chats.get(target_id) == user_id:
         active_chats.pop(target_id, None)
+    save_state()
     await callback.message.answer("Удалено из взаимок.")
     await callback.answer()
 
@@ -1432,6 +1706,7 @@ async def on_contact_request_send(callback: types.CallbackQuery):
         "created_at": time.time(),
         "status": "pending",
     }
+    save_state()
 
     await callback.message.answer(
         "💋 Ну всё, романтик хренов, решил раскрыть карты?\n"
@@ -1490,6 +1765,7 @@ async def on_contact_request_cancel(callback: types.CallbackQuery):
         return
 
     req["status"] = "canceled"
+    save_state()
     await callback.message.answer("Запрос на обмен контактами аннулирован.")
     await callback.answer()
 
@@ -1511,12 +1787,14 @@ async def on_contact_response(callback: types.CallbackQuery):
 
     if is_blocked_between(requester_id, target_id):
         req["status"] = "blocked"
+        save_state()
         await callback.message.answer("Обмен контактами запрещён.")
         await callback.answer()
         return
 
     if action == "contact_resp_no":
         req["status"] = "declined"
+        save_state()
         await callback.message.answer("Запрос закрыт.")
         try:
             await bot.send_message(
@@ -1536,6 +1814,7 @@ async def on_contact_response(callback: types.CallbackQuery):
     req["status"] = "accepted"
     if target_id in profiles and callback.from_user.username:
         profiles[target_id]["username"] = callback.from_user.username
+    save_state()
 
     requester_contact = format_contact_link(requester_id)
     target_contact = format_contact_link(target_id, callback.from_user)
@@ -1573,8 +1852,17 @@ async def cmd_donate(message: types.Message):
 @dp.callback_query(F.data == "don_peek_likes")
 async def on_don_peek_likes(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer(
-            "👁️ Подглядеть лайки — узнать, кому ты успел понравиться."
+        await callback.message.answer_invoice(
+            title="Подглядеть лайки",
+            description="Посмотреть список тех, кто уже поставил тебе лайк.",
+            payload="buy_peek_likes",
+            provider_token="",
+            currency="XTR",
+            prices=[
+                LabeledPrice(
+                    label="Список входящих лайков", amount=PEEK_LIKES_STARS_AMOUNT
+                )
+            ],
         )
     await callback.answer()
 
@@ -1634,6 +1922,7 @@ async def on_successful_payment(message: types.Message):
     uid = message.from_user.id
     if payment.invoice_payload == "buy_undo_skip":
         undo_credits[uid] = undo_credits.get(uid, 0) + 1
+        save_state()
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1650,17 +1939,20 @@ async def on_successful_payment(message: types.Message):
         )
     elif payment.invoice_payload == "buy_extra_likes":
         extra_likes[uid] = extra_likes.get(uid, 0) + EXTRA_LIKES_PACK_SIZE
+        save_state()
         await message.answer(
             f"🎯 Оплата прошла! Начислено +{EXTRA_LIKES_PACK_SIZE} доп. лайков "
             f"(всего доступно: {extra_likes[uid]}). Запускай /find!"
         )
     elif payment.invoice_payload == "buy_boost":
         boosted_until[uid] = time.time() + BOOST_DURATION_SEC
+        save_state()
         await message.answer(
             "🚀 Оплата прошла! Твоя анкета поднята в топ выдачи на 24 часа."
         )
     elif payment.invoice_payload == "buy_vip_30d":
         vip_until[uid] = time.time() + VIP_DURATION_SEC
+        save_state()
         await message.answer(
             "🖤 Оплата прошла! VIP активирован на 30 дней."
         )
@@ -1668,10 +1960,14 @@ async def on_successful_payment(message: types.Message):
         supporter_donations[uid] = (
             supporter_donations.get(uid, 0) + payment.total_amount
         )
+        save_state()
         await message.answer(
             f"🥀 Оплата прошла! Спасибо за поддержку ({payment.total_amount} звёзд). "
             "Можешь выбрать титул в анкете через /donate."
         )
+    elif payment.invoice_payload == "buy_peek_likes":
+        await message.answer("👁️ Оплата прошла! Открываю список тех, кто тебя лайкнул:")
+        await send_incoming_likes_list(message, uid)
 
 
 @dp.callback_query(F.data == "don_vip")
@@ -1751,10 +2047,12 @@ async def on_title_select(callback: types.CallbackQuery):
     uid = callback.from_user.id
     if callback.data == "title_clear":
         user_titles.pop(uid, None)
+        save_state()
         await callback.message.answer("Титул скрыт из профиля.")
     else:
         chosen = DONATE_TITLES[callback.data]
         user_titles[uid] = chosen
+        save_state()
         await callback.message.answer(f"Выбран титул: {chosen}.")
     await callback.answer()
 
@@ -1833,6 +2131,7 @@ async def on_set_gender_pref(callback: types.CallbackQuery):
     f = get_user_filter(callback.from_user.id)
     mapping = {"set_g_m": "m", "set_g_f": "f", "set_g_all": "all"}
     f["gender_pref"] = mapping[callback.data]
+    save_state()
     await callback.message.answer(
         format_filters_summary(callback.from_user.id),
         reply_markup=build_settings_keyboard(),
@@ -1876,6 +2175,7 @@ async def on_set_age_preset(callback: types.CallbackQuery, state: FSMContext):
     f = get_user_filter(callback.from_user.id)
     f["age_min"] = max(16, int(min_s))
     f["age_max"] = max(f["age_min"], min(99, int(max_s)))
+    save_state()
     await callback.message.answer(
         format_filters_summary(callback.from_user.id),
         reply_markup=build_settings_keyboard(),
@@ -1901,6 +2201,7 @@ async def on_custom_age_range(message: types.Message, state: FSMContext):
     f = get_user_filter(message.from_user.id)
     f["age_min"] = age_min
     f["age_max"] = age_max
+    save_state()
     await message.answer(
         format_filters_summary(message.from_user.id),
         reply_markup=build_settings_keyboard(),
@@ -1945,6 +2246,7 @@ async def on_set_city(callback: types.CallbackQuery):
     mode = callback.data.split(":", 1)[1]
     f = get_user_filter(callback.from_user.id)
     f["city_mode"] = "my" if mode == "my" else "any"
+    save_state()
     await callback.message.answer(
         format_filters_summary(callback.from_user.id),
         reply_markup=build_settings_keyboard(),
@@ -1960,6 +2262,7 @@ async def on_set_dist(callback: types.CallbackQuery):
     dist = callback.data.split(":", 1)[1]
     f = get_user_filter(callback.from_user.id)
     f["distance"] = "near" if dist == "near" else "any"
+    save_state()
     await callback.message.answer(
         format_filters_summary(callback.from_user.id),
         reply_markup=build_settings_keyboard(),
@@ -1977,6 +2280,7 @@ async def on_flt_expand_age(callback: types.CallbackQuery):
     min_allowed = 16 if (prof.get("age") or 18) < 18 else 18
     f["age_min"] = min_allowed
     f["age_max"] = min(99, max(f["age_max"] + 5, 30))
+    save_state()
     await callback.message.answer(
         f"🎂 Диапазон расширен до {f['age_min']}–{f['age_max']} лет."
     )
@@ -1995,6 +2299,7 @@ async def on_flt_any_city(callback: types.CallbackQuery):
         return
     f = get_user_filter(callback.from_user.id)
     f["city_mode"] = "any"
+    save_state()
     await callback.message.answer("📍 Теперь поиск по любому городу.")
     candidate_id = get_next_candidate_id(callback.from_user.id)
     if candidate_id is None:
@@ -2009,6 +2314,7 @@ async def on_flt_reset(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     if callback.from_user and callback.message:
         user_filters[callback.from_user.id] = get_default_filters()
+        save_state()
         await callback.message.answer(
             format_filters_summary(callback.from_user.id),
             reply_markup=build_settings_keyboard(),
@@ -2020,6 +2326,7 @@ async def on_flt_reset(callback: types.CallbackQuery, state: FSMContext):
 async def on_flt_save(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     if callback.from_user and callback.message:
+        save_state()
         await callback.message.answer(
             "🖤 Изменения сохранены. Запускай /find — дальше подбираю по ним."
         )
@@ -2053,6 +2360,7 @@ async def on_anon_message(message: types.Message, state: FSMContext):
 
 
 async def main() -> None:
+    load_state()
     threading.Thread(target=keepalive, daemon=True).start()
     await dp.start_polling(bot)
 
