@@ -12,6 +12,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 CONTACT_REQUEST_TTL = 24 * 60 * 60
+# Укажи сюда свой Telegram ID (числом) для доступа в /mod
+ADMIN_IDS: set[int] = set()
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -24,16 +26,34 @@ match_dates: dict[tuple[int, int], str] = {}
 user_titles: dict[int, str] = {}
 active_chats: dict[int, int] = {}
 blocked_users: dict[int, set[int]] = {}
-reports_log: list[dict] = []
 contact_requests: dict[tuple[int, int], dict] = {}
-# Фильтры поиска по пользователям:
-# {user_id: {"gender_pref": "all"|"m"|"f", "age_min": int, "age_max": int, "city_mode": "any"|"my", "distance": "any"|"near"}}
 user_filters: dict[int, dict] = {}
+
+# История сообщений между пользователями для материалов жалобы:
+# {(min_id, max_id): [{"sender_id": int, "text": str, "time": str}, ...]}
+chat_history: dict[tuple[int, int], list[dict]] = {}
+
+# Модерация и санкции
+reports_by_id: dict[int, dict] = {}
+report_counter: int = 1041
+user_warnings: dict[int, int] = {}
+user_restrictions: dict[int, dict] = {}  # {user_id: {"until": float, "banned": bool}}
+sos_requests: list[dict] = []
 
 DONATE_TITLES = {
     "title_sinner": "🥀 Грешник",
     "title_patron": "🖤 Покровитель тьмы",
     "title_sponsor": "💋 Спонсор чужой любви",
+}
+
+REPORT_REASONS = {
+    "rep_insult": ("💬 Оскорбления и травля", False),
+    "rep_spam": ("📨 Спам и навязчивые сообщения", False),
+    "rep_nsfw": ("🔞 Запрещённый сексуальный контент", True),
+    "rep_fake": ("🎭 Фейковая анкета / выдаёт себя за другого", False),
+    "rep_threats": ("⚠️ Угрозы и преследование", True),
+    "rep_minor": ("🚫 Несовершеннолетний в анкете / возрастное несоответствие", True),
+    "rep_other": ("❓ Другая причина", False),
 }
 
 
@@ -50,13 +70,53 @@ class FilterForm(StatesGroup):
     waiting_age_range = State()
 
 
+class ReportForm(StatesGroup):
+    waiting_comment = State()
+
+
+class SosForm(StatesGroup):
+    waiting_message = State()
+
+
+def get_pair_key(user_a: int, user_b: int) -> tuple[int, int]:
+    return (min(user_a, user_b), max(user_a, user_b))
+
+
+def record_chat_message(sender_id: int, receiver_id: int, text: str) -> None:
+    key = get_pair_key(sender_id, receiver_id)
+    bucket = chat_history.setdefault(key, [])
+    bucket.append(
+        {
+            "sender_id": sender_id,
+            "text": text,
+            "time": datetime.now().strftime("%d.%m %H:%M"),
+        }
+    )
+    if len(bucket) > 30:
+        del bucket[:-30]
+
+
+def get_restriction_status(user_id: int) -> str | None:
+    info = user_restrictions.get(user_id)
+    if not info:
+        return None
+    if info.get("banned"):
+        return "Аккаунт заблокирован модерацией."
+    until = info.get("until", 0)
+    if until > time.time():
+        dt_str = datetime.fromtimestamp(until).strftime("%d.%m.%Y %H:%M")
+        return f"Аккаунт временно ограничен до {dt_str}."
+    user_restrictions.pop(user_id, None)
+    return None
+
+
 def get_default_filters() -> dict:
     return {
-        "gender_pref": "all",  # all | m | f
+        "gender_pref": "all",
         "age_min": 18,
         "age_max": 25,
-        "city_mode": "any",  # any | my
-        "distance": "any",  # any | near
+        "city_mode": "any",
+        "distance": "any",
     }
 
 
@@ -117,10 +177,17 @@ def matches_gender_filter(pref: str, candidate_gender: str | None) -> bool:
     return True
 
 
+def is_same_age_cohort(age_a: int, age_b: int) -> bool:
+    # Не допускаем романтических мэтчей между несовершеннолетними (<18) и взрослыми (18+)
+    return (age_a < 18) == (age_b < 18)
+
+
 def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
     viewer = profiles.get(viewer_id)
     candidate = profiles.get(candidate_id)
     if not viewer or not candidate:
+        return False
+    if get_restriction_status(candidate_id) is not None:
         return False
 
     vf = get_user_filter(viewer_id)
@@ -130,8 +197,9 @@ def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
     c_age = viewer.get("age")
     if not isinstance(v_age, int) or not isinstance(c_age, int):
         return False
+    if not is_same_age_cohort(c_age, v_age):
+        return False
 
-    # 1. Кандидат подходит под фильтры смотрящего
     if not matches_gender_filter(vf["gender_pref"], candidate.get("gender")):
         return False
     if not (vf["age_min"] <= v_age <= vf["age_max"]):
@@ -142,7 +210,6 @@ def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
         if not v_city or v_city != c_city:
             return False
 
-    # 2. Смотрящий подходит под фильтры кандидата (взаимные предпочтения)
     if not matches_gender_filter(cf["gender_pref"], viewer.get("gender")):
         return False
     if not (cf["age_min"] <= c_age <= cf["age_max"]):
@@ -188,15 +255,27 @@ def is_blocked_between(user_a: int, user_b: int) -> bool:
     )
 
 
+def apply_block(blocker_id: int, target_id: int) -> None:
+    blocked_users.setdefault(blocker_id, set()).add(target_id)
+    matches_by_user.setdefault(blocker_id, set()).discard(target_id)
+    matches_by_user.setdefault(target_id, set()).discard(blocker_id)
+    if active_chats.get(blocker_id) == target_id:
+        active_chats.pop(blocker_id, None)
+    if active_chats.get(target_id) == blocker_id:
+        active_chats.pop(target_id, None)
+    contact_requests.pop((blocker_id, target_id), None)
+    contact_requests.pop((target_id, blocker_id), None)
+
+
 def get_match_date(user_a: int, user_b: int) -> str:
-    pair = (min(user_a, user_b), max(user_a, user_b))
+    pair = get_pair_key(user_a, user_b)
     return match_dates.get(pair, datetime.now().strftime("%d.%m.%Y"))
 
 
 def record_match(user_a: int, user_b: int) -> None:
     matches_by_user.setdefault(user_a, set()).add(user_b)
     matches_by_user.setdefault(user_b, set()).add(user_a)
-    pair = (min(user_a, user_b), max(user_a, user_b))
+    pair = get_pair_key(user_a, user_b)
     if pair not in match_dates:
         match_dates[pair] = datetime.now().strftime("%d.%m.%Y")
 
@@ -209,6 +288,21 @@ def get_pending_request(requester_id: int, target_id: int) -> dict | None:
         req["status"] = "expired"
         return None
     return req
+
+
+def build_safety_keyboard(target_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{target_id}"
+                ),
+                InlineKeyboardButton(
+                    text="🖕 Заблокировать", callback_data=f"blk_direct:{target_id}"
+                ),
+            ]
+        ]
+    )
 
 
 def build_anon_chat_keyboard(partner_id: int) -> InlineKeyboardMarkup:
@@ -227,10 +321,10 @@ def build_anon_chat_keyboard(partner_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="🚫 Заблокировать", callback_data=f"block_user:{partner_id}"
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{partner_id}"
                 ),
                 InlineKeyboardButton(
-                    text="⚠️ Пожаловаться", callback_data=f"report_user:{partner_id}"
+                    text="🖕 Заблокировать", callback_data=f"blk_direct:{partner_id}"
                 ),
             ],
             [
@@ -265,10 +359,10 @@ def build_match_card_keyboard(target_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="🚫 Заблокировать", callback_data=f"block_user:{target_id}"
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{target_id}"
                 ),
                 InlineKeyboardButton(
-                    text="⚠️ Пожаловаться", callback_data=f"report_user:{target_id}"
+                    text="🖕 Заблокировать", callback_data=f"blk_direct:{target_id}"
                 ),
             ],
             [
@@ -363,7 +457,12 @@ async def send_candidate(message: types.Message, viewer_id: int, target_id: int)
             [
                 InlineKeyboardButton(text="❤️", callback_data=f"swipe_like:{target_id}"),
                 InlineKeyboardButton(text="👎", callback_data=f"swipe_skip:{target_id}"),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚨 Жалоба / блок", callback_data=f"safety_menu:{target_id}"
+                )
+            ],
         ]
     )
     await message.answer_photo(
@@ -459,11 +558,119 @@ def build_donate_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+async def create_and_dispatch_report(
+    message: types.Message,
+    reporter_id: int,
+    target_id: int,
+    reason_key: str,
+    comment: str | None,
+) -> None:
+    global report_counter
+    report_counter += 1
+    rep_id = report_counter
+    reason_label, high_priority = REPORT_REASONS.get(
+        reason_key, ("❓ Другая причина", False)
+    )
+    created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
+    pair_msgs = chat_history.get(get_pair_key(reporter_id, target_id), [])
+    recent_msgs = [
+        m for m in pair_msgs[-8:] if m.get("sender_id") in (reporter_id, target_id)
+    ]
+
+    reports_by_id[rep_id] = {
+        "id": rep_id,
+        "target_id": target_id,
+        "reporter_id": reporter_id,
+        "reason_key": reason_key,
+        "reason_label": reason_label,
+        "high_priority": high_priority,
+        "created_at": created_at,
+        "comment": comment or "без комментария",
+        "messages_snapshot": recent_msgs,
+        "status": "pending",
+    }
+
+    for admin_id in ADMIN_IDS:
+        prio_tag = "🔥 ПРИОРИТЕТНАЯ ПРОВЕРКА\n" if high_priority else ""
+        admin_text = (
+            "🚨 MODERATION PANEL\n"
+            f"{prio_tag}"
+            "Новая жалоба\n"
+            f"Жалоба №{rep_id}\n"
+            f"• На кого: ID {target_id}\n"
+            f"• Кто пожаловался: ID {reporter_id}\n"
+            f"• Причина: {reason_label}\n"
+            f"• Дата: {created_at}\n"
+            f"• Комментарий: {comment or 'не добавлен'}"
+        )
+        mod_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔍 Проверить материалы",
+                        callback_data=f"mod_inspect:{rep_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚠️ Выдать предупреждение",
+                        callback_data=f"mod_warn:{rep_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="⏳ Временно ограничить аккаунт",
+                        callback_data=f"mod_limit:{rep_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🚫 Заблокировать аккаунт",
+                        callback_data=f"mod_ban:{rep_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Отклонить жалобу",
+                        callback_data=f"mod_reject:{rep_id}",
+                    ),
+                ],
+            ]
+        )
+        try:
+            await bot.send_message(
+                chat_id=admin_id, text=admin_text, reply_markup=mod_kb
+            )
+        except Exception:
+            pass
+
+    block_prompt_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🖕 Заблокировать тоже",
+                    callback_data=f"blk_after_rep:{target_id}",
+                ),
+                InlineKeyboardButton(
+                    text="💋 Нет, пока оставим",
+                    callback_data="blk_skip_after_rep",
+                ),
+            ]
+        ]
+    )
+    await message.answer(
+        f"Жалоба №{rep_id} принята и передана модерации.\n\n"
+        "🖤 ЕЩЁ ОДИН МОМЕНТ\n"
+        "Хочешь, чтобы этот персонаж больше не появлялся в твоей жизни?",
+        reply_markup=block_prompt_kb,
+    )
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user:
         uid = message.from_user.id
+        rest_msg = get_restriction_status(uid)
+        if rest_msg:
+            await message.answer(rest_msg)
+            return
         get_user_filter(uid)
         if uid in profiles and message.from_user.username:
             profiles[uid]["username"] = message.from_user.username
@@ -477,6 +684,12 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "reg_start")
 async def on_reg_start(callback: types.CallbackQuery):
+    if callback.from_user:
+        rest_msg = get_restriction_status(callback.from_user.id)
+        if rest_msg:
+            await callback.message.answer(rest_msg)
+            await callback.answer()
+            return
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -506,18 +719,18 @@ async def on_name(message: types.Message, state: FSMContext):
         return
     await state.update_data(name=name)
     await state.set_state(RegForm.waiting_age)
-    await message.answer("Сколько тебе лет? (только число, от 18)")
+    await message.answer("Сколько тебе лет? (только число, от 16)")
 
 
 @dp.message(RegForm.waiting_age)
 async def on_age(message: types.Message, state: FSMContext):
     raw_age = (message.text or "").strip()
     if not raw_age.isdigit():
-        await message.answer("Напиши возраст числом, например: 21.")
+        await message.answer("Напиши возраст числом, например: 19.")
         return
     age = int(raw_age)
-    if age < 18 or age > 99:
-        await message.answer("Доступно только с 18 лет. Введи корректный возраст.")
+    if age < 16 or age > 99:
+        await message.answer("Доступно с 16 лет. Введи корректный возраст.")
         return
     await state.update_data(age=age)
     await state.set_state(RegForm.waiting_city)
@@ -625,6 +838,10 @@ async def cmd_find(message: types.Message):
     if not message.from_user:
         return
     viewer_id = message.from_user.id
+    rest_msg = get_restriction_status(viewer_id)
+    if rest_msg:
+        await message.answer(rest_msg)
+        return
     if viewer_id not in profiles:
         await message.answer("Сначала заполни свою анкету через /start.")
         return
@@ -657,6 +874,12 @@ async def on_swipe(callback: types.CallbackQuery):
         await callback.answer()
         return
     viewer_id = callback.from_user.id
+    rest_msg = get_restriction_status(viewer_id)
+    if rest_msg:
+        await callback.message.answer(rest_msg)
+        await callback.answer()
+        return
+
     action, raw_target_id = callback.data.split(":", 1)
     target_id = int(raw_target_id)
 
@@ -685,6 +908,316 @@ async def on_swipe(callback: types.CallbackQuery):
         await send_no_candidates_prompt(callback.message, viewer_id)
     else:
         await send_candidate(callback.message, viewer_id, next_id)
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("safety_menu:"))
+async def on_safety_menu(callback: types.CallbackQuery):
+    if not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    await callback.message.answer(
+        "🚨 ЧТО-ТО ПОШЛО НЕ ТАК?\n"
+        "Если этот человек ведёт себя как последнее недоразумение — сообщи нам.",
+        reply_markup=build_safety_keyboard(target_id),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rep_start:"))
+async def on_report_start(callback: types.CallbackQuery):
+    if not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"rep_reason:{target_id}:{key}")]
+        for key, (label, _) in REPORT_REASONS.items()
+    ]
+    await callback.message.answer(
+        "🚨 НА ЧТО ЖАЛУЕМСЯ?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rep_reason:"))
+async def on_report_reason(callback: types.CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    _, raw_target, reason_key = callback.data.split(":", 2)
+    target_id = int(raw_target)
+    await state.set_state(ReportForm.waiting_comment)
+    await state.update_data(rep_target_id=target_id, rep_reason_key=reason_key)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Отправить без комментария", callback_data="rep_skip_comment"
+                )
+            ]
+        ]
+    )
+    await callback.message.answer(
+        "Хочешь добавить комментарий к жалобе? Напиши текст или нажми кнопку ниже.",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(ReportForm.waiting_comment, F.data == "rep_skip_comment")
+async def on_report_skip_comment(callback: types.CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    await state.clear()
+    await create_and_dispatch_report(
+        message=callback.message,
+        reporter_id=callback.from_user.id,
+        target_id=int(data["rep_target_id"]),
+        reason_key=str(data["rep_reason_key"]),
+        comment=None,
+    )
+    await callback.answer()
+
+
+@dp.message(ReportForm.waiting_comment)
+async def on_report_comment_text(message: types.Message, state: FSMContext):
+    if not message.from_user:
+        return
+    comment = (message.text or "").strip()
+    data = await state.get_data()
+    await state.clear()
+    await create_and_dispatch_report(
+        message=message,
+        reporter_id=message.from_user.id,
+        target_id=int(data["rep_target_id"]),
+        reason_key=str(data["rep_reason_key"]),
+        comment=comment or None,
+    )
+
+
+@dp.callback_query(F.data.startswith("blk_direct:"))
+async def on_block_direct(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    apply_block(callback.from_user.id, target_id)
+    await callback.message.answer(
+        "Пользователь заблокирован. Анкеты скрыты, переписка и обмен контактами закрыты."
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("blk_after_rep:"))
+async def on_block_after_report(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    apply_block(callback.from_user.id, target_id)
+    await callback.message.answer(
+        "Персонаж заблокирован. В твоей ленте и переписках он больше не появится."
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "blk_skip_after_rep")
+async def on_skip_block_after_report(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("Хорошо, блокировать пока не стала.")
+    await callback.answer()
+
+
+@dp.message(Command("sos"))
+async def cmd_sos(message: types.Message, state: FSMContext):
+    if not message.from_user:
+        return
+    await state.set_state(SosForm.waiting_message)
+    await message.answer(
+        "🚨 ЭКСТРЕННАЯ СВЯЗЬ С МОДЕРАЦИЕЙ\n"
+        "Опиши ситуацию, требующую немедленного вмешательства (угрозы, шантаж, "
+        "безопасность), и я передам её модераторам."
+    )
+
+
+@dp.message(SosForm.waiting_message)
+async def on_sos_text(message: types.Message, state: FSMContext):
+    if not message.from_user:
+        return
+    text = (message.text or "").strip()
+    await state.clear()
+    if not text:
+        await message.answer("Экстренное обращение отменено — текст пуст.")
+        return
+    entry = {
+        "user_id": message.from_user.id,
+        "text": text,
+        "time": datetime.now().strftime("%d.%m.%Y %H:%M"),
+    }
+    sos_requests.append(entry)
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text=(
+                    "🚨 ЭКСТРЕННЫЙ СИГНАЛ (/sos)\n"
+                    f"От пользователя: ID {message.from_user.id}\n"
+                    f"Время: {entry['time']}\n"
+                    f"Сообщение: {text}"
+                ),
+            )
+        except Exception:
+            pass
+    await message.answer("Экстренное обращение отправлено модерации.")
+
+
+@dp.message(Command("mod"))
+async def cmd_mod_panel(message: types.Message):
+    if not message.from_user or message.from_user.id not in ADMIN_IDS:
+        return
+    pending = [
+        r for r in reports_by_id.values() if r.get("status") == "pending"
+    ]
+    pending.sort(key=lambda r: (not r.get("high_priority"), r["id"]))
+    if not pending:
+        await message.answer("🚨 MODERATION PANEL\nОткрытых жалоб в очереди нет.")
+        return
+    await message.answer(f"🚨 MODERATION PANEL\nЖалоб в очереди: {len(pending)}")
+    for r in pending[:5]:
+        prio = "🔥 ПРИОРИТЕТ\n" if r.get("high_priority") else ""
+        text = (
+            f"{prio}"
+            f"Жалоба №{r['id']}\n"
+            f"• На кого: ID {r['target_id']}\n"
+            f"• Кто пожаловался: ID {r['reporter_id']}\n"
+            f"• Причина: {r['reason_label']}\n"
+            f"• Дата: {r['created_at']}\n"
+            f"• Комментарий: {r['comment']}"
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔍 Проверить материалы",
+                        callback_data=f"mod_inspect:{r['id']}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚠️ Выдать предупреждение",
+                        callback_data=f"mod_warn:{r['id']}",
+                    ),
+                    InlineKeyboardButton(
+                        text="⏳ Временно ограничить аккаунт",
+                        callback_data=f"mod_limit:{r['id']}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🚫 Заблокировать аккаунт",
+                        callback_data=f"mod_ban:{r['id']}",
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Отклонить жалобу",
+                        callback_data=f"mod_reject:{r['id']}",
+                    ),
+                ],
+            ]
+        )
+        await message.answer(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("mod_inspect:"))
+async def on_mod_inspect(callback: types.CallbackQuery):
+    if not callback.from_user or callback.from_user.id not in ADMIN_IDS or not callback.message:
+        await callback.answer()
+        return
+    rep_id = int(callback.data.split(":", 1)[1])
+    rep = reports_by_id.get(rep_id)
+    if not rep:
+        await callback.answer("Жалоба не найдена.", show_alert=True)
+        return
+    target_id = rep["target_id"]
+    prof = profiles.get(target_id)
+    prof_text = (
+        format_profile_caption(prof, header=f"Анкета ID {target_id}", user_id=target_id)
+        if prof
+        else f"Анкета ID {target_id} отсутствует в памяти."
+    )
+    warns = user_warnings.get(target_id, 0)
+    msgs = rep.get("messages_snapshot", [])
+    msgs_lines = [
+        f"[{m.get('time')}] ID {m.get('sender_id')}: {m.get('text')}" for m in msgs
+    ]
+    msgs_block = "\n".join(msgs_lines) if msgs_lines else "Сообщений в буфере нет."
+    await callback.message.answer(
+        f"🔍 Материалы по жалобе №{rep_id}\n"
+        f"Предупреждений у ID {target_id}: {warns}\n\n"
+        f"{prof_text}\n\n"
+        f"Последние сообщения:\n{msgs_block}"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(
+    F.data.startswith(("mod_warn:", "mod_limit:", "mod_ban:", "mod_reject:"))
+)
+async def on_mod_decision(callback: types.CallbackQuery):
+    if not callback.from_user or callback.from_user.id not in ADMIN_IDS or not callback.message:
+        await callback.answer()
+        return
+    action, raw_id = callback.data.split(":", 1)
+    rep_id = int(raw_id)
+    rep = reports_by_id.get(rep_id)
+    if not rep:
+        await callback.answer("Жалоба не найдена.", show_alert=True)
+        return
+
+    target_id = rep["target_id"]
+    reporter_id = rep["reporter_id"]
+
+    if action == "mod_warn":
+        user_warnings[target_id] = user_warnings.get(target_id, 0) + 1
+        rep["status"] = "warned"
+        verdict_label = f"Выдано предупреждение (всего: {user_warnings[target_id]})."
+    elif action == "mod_limit":
+        user_restrictions[target_id] = {
+            "until": time.time() + 24 * 60 * 60,
+            "banned": False,
+        }
+        rep["status"] = "limited"
+        verdict_label = "Аккаунт временно ограничен на 24 часа."
+    elif action == "mod_ban":
+        user_restrictions[target_id] = {
+            "until": time.time() + 10 * 365 * 24 * 60 * 60,
+            "banned": True,
+        }
+        rep["status"] = "banned"
+        verdict_label = "Аккаунт заблокирован."
+    else:
+        rep["status"] = "rejected"
+        verdict_label = "Жалоба отклонена."
+
+    await callback.message.answer(f"Жалоба №{rep_id}: {verdict_label}")
+
+    try:
+        await bot.send_message(
+            chat_id=reporter_id,
+            text=(
+                "🖤 ТВОЯ ЖАЛОБА РАССМОТРЕНА.\n"
+                "Модерация проверила обращение. Спасибо, что помог нам сделать это место безопаснее.\n"
+                "Мы не раскрываем личность заявителя и подробности дисциплинарных мер.\n"
+                "Береги себя, маленький вредитель. 💋"
+            ),
+        )
+    except Exception:
+        pass
 
     await callback.answer()
 
@@ -764,45 +1297,6 @@ async def on_match_delete_yes(callback: types.CallbackQuery):
     if active_chats.get(target_id) == user_id:
         active_chats.pop(target_id, None)
     await callback.message.answer("Удалено из взаимок.")
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("block_user:"))
-async def on_block_user(callback: types.CallbackQuery):
-    if not callback.from_user or not callback.message:
-        await callback.answer()
-        return
-    user_id = callback.from_user.id
-    target_id = int(callback.data.split(":", 1)[1])
-    blocked_users.setdefault(user_id, set()).add(target_id)
-    matches_by_user.setdefault(user_id, set()).discard(target_id)
-    matches_by_user.setdefault(target_id, set()).discard(user_id)
-    if active_chats.get(user_id) == target_id:
-        active_chats.pop(user_id, None)
-    if active_chats.get(target_id) == user_id:
-        active_chats.pop(target_id, None)
-    contact_requests.pop((user_id, target_id), None)
-    contact_requests.pop((target_id, user_id), None)
-    await callback.message.answer(
-        "Пользователь заблокирован. Переписка и обмен контактами закрыты."
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("report_user:"))
-async def on_report_user(callback: types.CallbackQuery):
-    if not callback.from_user or not callback.message:
-        await callback.answer()
-        return
-    target_id = int(callback.data.split(":", 1)[1])
-    reports_log.append(
-        {
-            "reporter_id": callback.from_user.id,
-            "target_id": target_id,
-            "timestamp": time.time(),
-        }
-    )
-    await callback.message.answer("Жалоба зафиксирована.")
     await callback.answer()
 
 
@@ -966,13 +1460,6 @@ async def on_contact_response(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(Command("matches"))
-async def cmd_matches_alias(message: types.Message):
-    if not message.from_user:
-        return
-    await open_matches_section(message, message.from_user.id)
-
-
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
     await message.answer(
@@ -1110,9 +1597,7 @@ async def on_flt_gender_menu(callback: types.CallbackQuery):
                 ],
             ]
         )
-        await callback.message.answer(
-            "💋 Кого будем искать?", reply_markup=keyboard
-        )
+        await callback.message.answer("💋 Кого будем искать?", reply_markup=keyboard)
     await callback.answer()
 
 
@@ -1140,17 +1625,18 @@ async def on_flt_age_menu(callback: types.CallbackQuery, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="16 — 17 лет", callback_data="set_age:16:17"),
                 InlineKeyboardButton(text="18 — 25 лет", callback_data="set_age:18:25"),
-                InlineKeyboardButton(text="18 — 30 лет", callback_data="set_age:18:30"),
             ],
             [
+                InlineKeyboardButton(text="18 — 30 лет", callback_data="set_age:18:30"),
                 InlineKeyboardButton(text="21 — 35 лет", callback_data="set_age:21:35"),
-                InlineKeyboardButton(text="18 — 99 лет", callback_data="set_age:18:99"),
             ],
+            [InlineKeyboardButton(text="18 — 99 лет", callback_data="set_age:18:99")],
         ]
     )
     await callback.message.answer(
-        "🎂 Выбери диапазон (18+) или напиши свой текстом, например: 18-24",
+        "🎂 Выбери диапазон или напиши свой текстом, например: 18-24",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -1164,7 +1650,7 @@ async def on_set_age_preset(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     _, min_s, max_s = callback.data.split(":", 2)
     f = get_user_filter(callback.from_user.id)
-    f["age_min"] = max(18, int(min_s))
+    f["age_min"] = max(16, int(min_s))
     f["age_max"] = max(f["age_min"], min(99, int(max_s)))
     await callback.message.answer(
         format_filters_summary(callback.from_user.id),
@@ -1180,12 +1666,12 @@ async def on_custom_age_range(message: types.Message, state: FSMContext):
     raw = (message.text or "").replace("—", "-").replace("–", "-").strip()
     parts = [p.strip() for p in raw.split("-")]
     if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        await message.answer("Напиши диапазон от 18, например: 18-25.")
+        await message.answer("Напиши диапазон от 16, например: 18-25.")
         return
     age_min = int(parts[0])
     age_max = int(parts[1])
-    if age_min < 18 or age_max > 99 or age_min > age_max:
-        await message.answer("Возраст должен быть от 18 до 99, а начало не больше конца.")
+    if age_min < 16 or age_max > 99 or age_min > age_max:
+        await message.answer("Возраст должен быть от 16 до 99, а начало не больше конца.")
         return
     await state.clear()
     f = get_user_filter(message.from_user.id)
@@ -1263,7 +1749,9 @@ async def on_flt_expand_age(callback: types.CallbackQuery):
         await callback.answer()
         return
     f = get_user_filter(callback.from_user.id)
-    f["age_min"] = 18
+    prof = profiles.get(callback.from_user.id, {})
+    min_allowed = 16 if (prof.get("age") or 18) < 18 else 18
+    f["age_min"] = min_allowed
     f["age_max"] = min(99, max(f["age_max"] + 5, 30))
     await callback.message.answer(
         f"🎂 Диапазон расширен до {f['age_min']}–{f['age_max']} лет."
@@ -1319,16 +1807,22 @@ async def on_anon_message(message: types.Message, state: FSMContext):
     if await state.get_state() is not None or not message.from_user:
         return
     sender_id = message.from_user.id
+    rest_msg = get_restriction_status(sender_id)
+    if rest_msg:
+        await message.answer(rest_msg)
+        return
     partner_id = active_chats.get(sender_id)
     if not partner_id:
         return
     if is_blocked_between(sender_id, partner_id):
         await message.answer("Сообщение не отправлено: чат заблокирован.")
         return
+    msg_text = message.text or ""
+    record_chat_message(sender_id, partner_id, msg_text)
     try:
         await bot.send_message(
             chat_id=partner_id,
-            text=f"💌 Анонимно:\n{message.text}",
+            text=f"💌 Анонимно:\n{msg_text}",
         )
     except Exception:
         await message.answer("Не удалось доставить сообщение собеседнику.")
