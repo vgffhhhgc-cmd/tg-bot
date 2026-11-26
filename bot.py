@@ -8,6 +8,11 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer("Привет! Команда /start сработала.")
+
+
 @dp.message(Command("me"))
 async def cmd_me(message: types.Message):
     await message.answer("🃏 Твой козырь")
