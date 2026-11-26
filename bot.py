@@ -21,6 +21,7 @@ GENERAL_CHAT_URL = "https://t.me/+0zfQwL8xH9diY2My"
 EXTRA_LIKES_PACK_SIZE = 10
 BOOST_DURATION_SEC = 24 * 60 * 60
 VIP_DURATION_SEC = 30 * 24 * 60 * 60
+SUPPORT_STARS_AMOUNT = 50
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
 
@@ -34,6 +35,7 @@ undo_credits: dict[int, int] = {}
 extra_likes: dict[int, int] = {}
 boosted_until: dict[int, float] = {}
 vip_until: dict[int, float] = {}
+supporter_donations: dict[int, int] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
 match_dates: dict[tuple[int, int], str] = {}
@@ -1662,6 +1664,14 @@ async def on_successful_payment(message: types.Message):
         await message.answer(
             "🖤 Оплата прошла! VIP активирован на 30 дней."
         )
+    elif payment.invoice_payload == "buy_support_donation":
+        supporter_donations[uid] = (
+            supporter_donations.get(uid, 0) + payment.total_amount
+        )
+        await message.answer(
+            f"🥀 Оплата прошла! Спасибо за поддержку ({payment.total_amount} звёзд). "
+            "Можешь выбрать титул в анкете через /donate."
+        )
 
 
 @dp.callback_query(F.data == "don_vip")
@@ -1683,6 +1693,12 @@ async def on_don_support(callback: types.CallbackQuery):
     if callback.message:
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🥀 Задонатить {SUPPORT_STARS_AMOUNT} звёзд",
+                        callback_data="pay_support_50",
+                    )
+                ],
                 [InlineKeyboardButton(text="🥀 Грешник", callback_data="title_sinner")],
                 [
                     InlineKeyboardButton(
@@ -1702,8 +1718,27 @@ async def on_don_support(callback: types.CallbackQuery):
             ]
         )
         await callback.message.answer(
-            "🥀 Поддержать проект — просто потому что можешь, чёртов меценат. Выбери титул по желанию:",
+            "🥀 Поддержать проект — просто потому что можешь, чёртов меценат. "
+            "Можно закинуть звёзд или выбрать титул по желанию:",
             reply_markup=keyboard,
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "pay_support_50")
+async def on_pay_support_50(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer_invoice(
+            title="Поддержка проекта",
+            description="Добровольный донат на развитие бота.",
+            payload="buy_support_donation",
+            provider_token="",
+            currency="XTR",
+            prices=[
+                LabeledPrice(
+                    label="Поддержка проекта", amount=SUPPORT_STARS_AMOUNT
+                )
+            ],
         )
     await callback.answer()
 
