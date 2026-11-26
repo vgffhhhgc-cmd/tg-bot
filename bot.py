@@ -17,6 +17,10 @@ dp = Dispatcher()
 profiles: dict[int, dict] = {}
 # Кого уже просмотрел пользователь: {viewer_id: set_of_target_ids}
 seen_profiles: dict[int, set[int]] = {}
+# Кого лайкнул пользователь: {user_id: set_of_liked_ids}
+likes_given: dict[int, set[int]] = {}
+# Взаимные совпадения: {user_id: set_of_matched_ids}
+matches_by_user: dict[int, set[int]] = {}
 
 
 class RegForm(StatesGroup):
@@ -253,8 +257,20 @@ async def on_swipe(callback: types.CallbackQuery):
     target_id = int(raw_target_id)
 
     seen_profiles.setdefault(viewer_id, set()).add(target_id)
-    verdict = "❤️ Лайк отправлен" if action == "swipe_like" else "👎 Пропущено"
-    await callback.message.answer(verdict)
+
+    if action == "swipe_like":
+        likes_given.setdefault(viewer_id, set()).add(target_id)
+        if viewer_id in likes_given.get(target_id, set()):
+            matches_by_user.setdefault(viewer_id, set()).add(target_id)
+            matches_by_user.setdefault(target_id, set()).add(viewer_id)
+            target_profile = profiles.get(target_id, {})
+            await callback.message.answer(
+                f"🍒 Взаимка с {target_profile.get('name', 'пользователем')}!"
+            )
+        else:
+            await callback.message.answer("❤️ Лайк отправлен")
+    else:
+        await callback.message.answer("👎 Пропущено")
 
     next_id = get_next_candidate_id(viewer_id)
     if next_id is None:
@@ -267,23 +283,22 @@ async def on_swipe(callback: types.CallbackQuery):
 
 @dp.message(Command("matches"))
 async def cmd_matches(message: types.Message):
-    await message.answer("🍒 Взаимки")
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    matched_ids = matches_by_user.get(user_id, set())
+    if not matched_ids:
+        await message.answer("🍒 Взаимок пока нет.")
+        return
+
+    lines = ["🍒 Твои взаимки:"]
+    for mid in matched_ids:
+        p = profiles.get(mid)
+        if p:
+            lines.append(f"• {p.get('name')}, {p.get('age')} — {p.get('city')}")
+    await message.answer("\n".join(lines))
 
 
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
-    await message.answer("💸 Задонатить")
-
-
-@dp.message(Command("settings"))
-async def cmd_settings(message: types.Message):
-    await message.answer("⚙️ Подкрутить")
-
-
-async def main() -> None:
-    threading.Thread(target=keepalive, daemon=True).start()
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    await
