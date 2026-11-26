@@ -19,6 +19,7 @@ TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 CONTACT_REQUEST_TTL = 24 * 60 * 60
 GENERAL_CHAT_URL = "https://t.me/+0zfQwL8xH9diY2My"
 EXTRA_LIKES_PACK_SIZE = 10
+BOOST_DURATION_SEC = 24 * 60 * 60
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
 
@@ -30,6 +31,7 @@ seen_profiles: dict[int, set[int]] = {}
 skipped_history: dict[int, list[int]] = {}
 undo_credits: dict[int, int] = {}
 extra_likes: dict[int, int] = {}
+boosted_until: dict[int, float] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
 match_dates: dict[tuple[int, int], str] = {}
@@ -82,6 +84,14 @@ class ReportForm(StatesGroup):
 
 class SosForm(StatesGroup):
     waiting_message = State()
+
+
+def is_user_boosted(user_id: int) -> bool:
+    until = boosted_until.get(user_id, 0)
+    if until > time.time():
+        return True
+    boosted_until.pop(user_id, None)
+    return False
 
 
 def get_pair_key(user_a: int, user_b: int) -> tuple[int, int]:
@@ -405,12 +415,18 @@ def format_profile_caption(
 
 def get_next_candidate_id(viewer_id: int) -> int | None:
     viewed = seen_profiles.setdefault(viewer_id, set())
-    for uid in profiles:
-        if uid == viewer_id or uid in viewed or is_blocked_between(viewer_id, uid):
-            continue
-        if is_mutual_match_criteria(viewer_id, uid):
-            return uid
-    return None
+    eligible = [
+        uid
+        for uid in profiles
+        if uid != viewer_id
+        and uid not in viewed
+        and not is_blocked_between(viewer_id, uid)
+        and is_mutual_match_criteria(viewer_id, uid)
+    ]
+    if not eligible:
+        return None
+    eligible.sort(key=lambda uid: (not is_user_boosted(uid)))
+    return eligible[0]
 
 
 def has_any_matching_candidate(viewer_id: int) -> bool:
@@ -462,6 +478,7 @@ async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> N
 
 async def send_candidate(message: types.Message, viewer_id: int, target_id: int) -> None:
     candidate = profiles[target_id]
+    header = "🚀 В топе | 👀 Твой типаж" if is_user_boosted(target_id) else "👀 Твой типаж"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -477,7 +494,7 @@ async def send_candidate(message: types.Message, viewer_id: int, target_id: int)
     )
     await message.answer_photo(
         photo=candidate["photo_id"],
-        caption=format_profile_caption(candidate, header="👀 Твой типаж", user_id=target_id),
+        caption=format_profile_caption(candidate, header=header, user_id=target_id),
         reply_markup=keyboard,
     )
 
@@ -1546,7 +1563,14 @@ async def on_don_peek_likes(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "don_boost")
 async def on_don_boost(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("🚀 Поднять анкету — пусть тебя заметят.")
+        await callback.message.answer_invoice(
+            title="Поднять анкету",
+            description="Поставить анкету в топ выдачи на 24 часа.",
+            payload="buy_boost",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="Поднятие анкеты на 24ч", amount=30)],
+        )
     await callback.answer()
 
 
@@ -1610,6 +1634,11 @@ async def on_successful_payment(message: types.Message):
         await message.answer(
             f"🎯 Оплата прошла! Начислено +{EXTRA_LIKES_PACK_SIZE} доп. лайков "
             f"(всего доступно: {extra_likes[uid]}). Запускай /find!"
+        )
+    elif payment.invoice_payload == "buy_boost":
+        boosted_until[uid] = time.time() + BOOST_DURATION_SEC
+        await message.answer(
+            "🚀 Оплата прошла! Твоя анкета поднята в топ выдачи на 24 часа."
         )
 
 
