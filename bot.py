@@ -1,20 +1,36 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart,Command:
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import Command
 
-TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
+TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxm"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    await message.answer("Я умею отвечать на /start и /help.")
 
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message) -> None:
-    await message.answer("Бот работает")
+@dp.message(Command("me"))
+async def cmd_me(message: types.Message):
+    await message.answer("🃏 Твой козырь")
+
+
+@dp.message(Command("find"))
+async def cmd_find(message: types.Message):
+    await message.answer("👀 Твой типаж")
+
+
+@dp.message(Command("matches"))
+async def cmd_matches(message: types.Message):
+    await message.answer("🍒 Взаимки")
+
+
+@dp.message(Command("donate"))
+async def cmd_donate(message: types.Message):
+    await message.answer("💸 Задонатить")
+
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    await message.answer("⚙️ Подкрутить")
 
 
 async def main() -> None:
