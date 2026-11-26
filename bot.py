@@ -1,4 +1,5 @@
 import asyncio
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, types
@@ -11,6 +12,8 @@ dp = Dispatcher()
 
 
 def keepalive() -> None:
+    port = int(os.environ.get("PORT", 10000))
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             self.send_response(200)
@@ -20,7 +23,7 @@ def keepalive() -> None:
         def log_message(self, format: str, *args) -> None:
             return
 
-    HTTPServer(("0.0.0.0", 10000), Handler).serve_forever()
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
 @dp.message(Command("start"))
@@ -60,3 +63,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
