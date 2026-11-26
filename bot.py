@@ -8,7 +8,12 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    PreCheckoutQuery,
+)
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 CONTACT_REQUEST_TTL = 24 * 60 * 60
@@ -1507,10 +1512,31 @@ async def on_don_extra_likes(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "don_undo_skip")
 async def on_don_undo_skip(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer(
-            "🔄 Отменить дизлайк — вернуть случайно пропущенную анкету."
+        await callback.message.answer_invoice(
+            title="Отменить дизлайк",
+            description="Вернуть последнюю пропущенную анкету.",
+            payload="buy_undo_skip",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="Отмена дизлайка", amount=10)],
         )
     await callback.answer()
+
+
+@dp.pre_checkout_query()
+async def on_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await pre_checkout_query.answer(ok=True)
+
+
+@dp.message(F.successful_payment)
+async def on_successful_payment(message: types.Message):
+    payment = message.successful_payment
+    if not payment:
+        return
+    if payment.invoice_payload == "buy_undo_skip":
+        await message.answer(
+            "🔄 Оплата прошла! Можешь вернуть пропущенную анкету."
+        )
 
 
 @dp.callback_query(F.data == "don_vip")
