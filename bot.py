@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import math
 import os
 import threading
 import time
@@ -13,8 +14,11 @@ from aiogram.types import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     LabeledPrice,
     PreCheckoutQuery,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
@@ -27,6 +31,7 @@ SUPPORT_STARS_AMOUNT = 50
 PEEK_LIKES_STARS_AMOUNT = 15
 KRK_SITE_TITLE = "slon6.at"
 KRK_SITE_URL = "https://slon6.at"
+NEARBY_RADIUS_KM = 15.0
 STATE_FILE_PATH = os.environ.get("STATE_FILE_PATH", "bot_state.json")
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
@@ -50,6 +55,7 @@ active_chats: dict[int, int] = {}
 blocked_users: dict[int, set[int]] = {}
 contact_requests: dict[tuple[int, int], dict] = {}
 user_filters: dict[int, dict] = {}
+user_locations: dict[int, dict] = {}
 
 chat_history: dict[tuple[int, int], list[dict]] = {}
 reports_by_id: dict[int, dict] = {}
@@ -130,6 +136,7 @@ def save_state() -> None:
             "blocked_users": {str(k): list(v) for k, v in blocked_users.items()},
             "contact_requests": {_pair_to_str(k): v for k, v in contact_requests.items()},
             "user_filters": {str(k): v for k, v in user_filters.items()},
+            "user_locations": {str(k): v for k, v in user_locations.items()},
             "chat_history": {_pair_to_str(k): v for k, v in chat_history.items()},
             "reports_by_id": {str(k): v for k, v in reports_by_id.items()},
             "report_counter": report_counter,
@@ -205,6 +212,9 @@ def load_state() -> None:
         for k, v in data.get("user_filters", {}).items():
             if k.lstrip("-").isdigit() and isinstance(v, dict):
                 user_filters[int(k)] = v
+        for k, v in data.get("user_locations", {}).items():
+            if k.lstrip("-").isdigit() and isinstance(v, dict):
+                user_locations[int(k)] = v
         for k, v in data.get("chat_history", {}).items():
             pair = _str_to_pair(k)
             if pair and isinstance(v, list):
@@ -224,6 +234,58 @@ def load_state() -> None:
             sos_requests.extend(data["sos_requests"])
     except Exception:
         pass
+
+
+def calc_distance_km(user_a: int, user_b: int) -> float | None:
+    loc_a = user_locations.get(user_a)
+    loc_b = user_locations.get(user_b)
+    if not loc_a or not loc_b:
+        return None
+    try:
+        lat1 = float(loc_a["lat"])
+        lon1 = float(loc_a["lon"])
+        lat2 = float(loc_b["lat"])
+        lon2 = float(loc_b["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    earth_radius_km = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return earth_radius_km * c
+
+
+def format_distance_line(viewer_id: int, target_id: int) -> str:
+    dist_km = calc_distance_km(viewer_id, target_id)
+    if dist_km is None:
+        return ""
+    if dist_km < 1.0:
+        meters = max(50, int(round(dist_km * 1000 / 50) * 50))
+        return f"\n📍 Расстояние: ~{meters} м"
+    return f"\n📍 Расстояние: ~{round(dist_km, 1)} км"
+
+
+def build_location_request_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="📍 Отправить мою геолокацию", request_location=True
+                )
+            ],
+            [KeyboardButton(text="✖️ Отмена")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 def is_user_boosted(user_id: int) -> bool:
@@ -301,14 +363,19 @@ def format_filters_summary(user_id: int) -> str:
     f = get_user_filter(user_id)
     gender_map = {"all": "Всех подряд", "m": "Только парней", "f": "Только девушек"}
     city_map = {"any": "Любой город", "my": "Только мой город"}
-    dist_map = {"any": "Без ограничений", "near": "Поблизости"}
+    dist_map = {
+        "any": "Без ограничений",
+        "near": f"Поблизости (до {int(NEARBY_RADIUS_KM)} км)",
+    }
+    has_geo = "указана ✅" if user_id in user_locations else "не указана"
     return (
         "⚙️ ТВОИ НАСТРОЙКИ:\n"
         "Давай подберём тебе кого-нибудь, пока ты окончательно не ебанулся от одиночества.\n\n"
         f"💋 Кого ищем: {gender_map.get(f['gender_pref'], 'Всех подряд')}\n"
         f"🎂 Возрастной диапазон: {f['age_min']} — {f['age_max']} лет\n"
         f"📍 Город: {city_map.get(f['city_mode'], 'Любой город')}\n"
-        f"🌍 Дистанция: {dist_map.get(f['distance'], 'Без ограничений')}"
+        f"🌍 Дистанция: {dist_map.get(f['distance'], 'Без ограничений')}\n"
+        f"📡 Геолокация: {has_geo}"
     )
 
 
@@ -384,6 +451,10 @@ def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
         c_city = (candidate.get("city") or "").strip().lower()
         if not v_city or v_city != c_city:
             return False
+    if vf["distance"] == "near":
+        dist = calc_distance_km(viewer_id, candidate_id)
+        if dist is None or dist > NEARBY_RADIUS_KM:
+            return False
 
     if not matches_gender_filter(cf["gender_pref"], viewer.get("gender")):
         return False
@@ -393,6 +464,10 @@ def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
         v_city = (viewer.get("city") or "").strip().lower()
         c_city = (candidate.get("city") or "").strip().lower()
         if not c_city or v_city != c_city:
+            return False
+    if cf["distance"] == "near":
+        dist = calc_distance_km(candidate_id, viewer_id)
+        if dist is None or dist > NEARBY_RADIUS_KM:
             return False
 
     return True
@@ -556,6 +631,7 @@ def format_profile_caption(
     profile: dict,
     header: str = "🃏 Твой козырь",
     user_id: int | None = None,
+    viewer_id: int | None = None,
     match_date: str | None = None,
     include_bonuses: bool = False,
 ) -> str:
@@ -569,6 +645,9 @@ def format_profile_caption(
             "%d.%m.%Y"
         )
         vip_line = f"\nVIP активен до: {vip_until_str}"
+    dist_line = ""
+    if viewer_id is not None and user_id is not None and viewer_id != user_id:
+        dist_line = format_distance_line(viewer_id, user_id)
     date_line = f"\nДата мэтча: {match_date}" if match_date else ""
     bonuses_line = ""
     if include_bonuses and user_id is not None:
@@ -582,7 +661,7 @@ def format_profile_caption(
     return (
         f"{header}{vip_badge}:\n"
         f"Имя: {profile.get('name')}, {profile.get('age')}\n"
-        f"Город: {profile.get('city')}\n"
+        f"Город: {profile.get('city')}{dist_line}\n"
         f"Пол: {profile.get('gender')} | Ищет/интересы: {profile.get('looking_for')}\n"
         f"О себе: {profile.get('bio')}{title_line}{vip_line}{bonuses_line}{date_line}"
     )
@@ -651,7 +730,14 @@ def get_next_candidate_id(viewer_id: int) -> int | None:
     ]
     if not eligible:
         return None
-    eligible.sort(key=lambda uid: (not is_user_boosted(uid)))
+    eligible.sort(
+        key=lambda uid: (
+            not is_user_boosted(uid),
+            calc_distance_km(viewer_id, uid)
+            if calc_distance_km(viewer_id, uid) is not None
+            else 10**9,
+        )
+    )
     return eligible[0]
 
 
@@ -665,6 +751,7 @@ def has_any_matching_candidate(viewer_id: int) -> bool:
 
 
 async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> None:
+    vf = get_user_filter(viewer_id)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -687,7 +774,13 @@ async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> N
             ],
         ]
     )
-    if has_any_matching_candidate(viewer_id):
+    if vf.get("distance") == "near" and viewer_id not in user_locations:
+        text = (
+            f"📍 Включён режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)», "
+            "но ты ещё не скинула свою геолокацию.\n"
+            "Зайди в /settings -> «Город и расстояние» и отправь локацию."
+        )
+    elif has_any_matching_candidate(viewer_id):
         text = (
             "👀 Подходящие анкеты по текущим фильтрам закончились.\n"
             "Настройки не сбрасываю без твоего согласия — можешь начать просмотр заново "
@@ -720,7 +813,9 @@ async def send_candidate(message: types.Message, viewer_id: int, target_id: int)
     )
     await message.answer_photo(
         photo=candidate["photo_id"],
-        caption=format_profile_caption(candidate, header=header, user_id=target_id),
+        caption=format_profile_caption(
+            candidate, header=header, user_id=target_id, viewer_id=viewer_id
+        ),
         reply_markup=keyboard,
     )
 
@@ -734,6 +829,7 @@ async def send_match_card(message: types.Message, viewer_id: int, target_id: int
         candidate,
         header="💌 Открыть переписку",
         user_id=target_id,
+        viewer_id=viewer_id,
         match_date=get_match_date(viewer_id, target_id),
     )
     await message.answer_photo(
@@ -1273,7 +1369,9 @@ async def on_peek_view(callback: types.CallbackQuery):
     )
     await callback.message.answer_photo(
         photo=prof["photo_id"],
-        caption=format_profile_caption(prof, header="👁️ Лайкнул(а)", user_id=target_id),
+        caption=format_profile_caption(
+            prof, header="👁️ Лайкнул(а)", user_id=target_id, viewer_id=callback.from_user.id
+        ),
         reply_markup=kb,
     )
     await callback.answer()
@@ -2254,15 +2352,74 @@ async def on_flt_geo_menu(callback: types.CallbackQuery):
                         callback_data="set_dist:any",
                     ),
                     InlineKeyboardButton(
-                        text="🌍 Дистанция: Поблизости", callback_data="set_dist:near"
+                        text=f"🌍 Поблизости (до {int(NEARBY_RADIUS_KM)} км)",
+                        callback_data="set_dist:near",
                     ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📡 Скинуть геолокацию",
+                        callback_data="req_send_location",
+                    )
                 ],
             ]
         )
         await callback.message.answer(
-            "📍 Выбери город и дистанцию:", reply_markup=keyboard
+            "📍 Выбери город, дистанцию или отправь свою геолокацию:",
+            reply_markup=keyboard,
         )
     await callback.answer()
+
+
+@dp.callback_query(F.data == "req_send_location")
+async def on_request_send_location(callback: types.CallbackQuery):
+    if not callback.message:
+        await callback.answer()
+        return
+    await callback.message.answer(
+        "📡 Нажми кнопку ниже, чтобы скинуть свою геолокацию, "
+        "или отправь её через скрепку в чате.\n"
+        "Точные координаты другим пользователям не показываются — только примерное расстояние.",
+        reply_markup=build_location_request_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.message(F.text == "✖️ Отмена")
+async def on_cancel_location_kb(message: types.Message):
+    if not message.from_user:
+        return
+    await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        format_filters_summary(message.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+
+
+@dp.message(F.location)
+async def on_user_location(message: types.Message):
+    if not message.from_user or not message.location:
+        return
+    uid = message.from_user.id
+    rest_msg = get_restriction_status(uid)
+    if rest_msg:
+        await message.answer(rest_msg, reply_markup=ReplyKeyboardRemove())
+        return
+    user_locations[uid] = {
+        "lat": message.location.latitude,
+        "lon": message.location.longitude,
+        "updated_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+    }
+    save_state()
+    await message.answer(
+        f"📡 Геолокация сохранена. Теперь в анкетах будет видна примерная дистанция, "
+        f"а в режиме «Поблизости» — подбор в радиусе {int(NEARBY_RADIUS_KM)} км.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await message.answer(
+        format_filters_summary(uid),
+        reply_markup=build_settings_keyboard(),
+    )
 
 
 @dp.callback_query(F.data.startswith("set_city:"))
@@ -2286,12 +2443,25 @@ async def on_set_dist(callback: types.CallbackQuery):
     if not callback.from_user or not callback.message:
         await callback.answer()
         return
+    uid = callback.from_user.id
     dist = callback.data.split(":", 1)[1]
-    f = get_user_filter(callback.from_user.id)
-    f["distance"] = "near" if dist == "near" else "any"
-    save_state()
+    f = get_user_filter(uid)
+    if dist == "near":
+        f["distance"] = "near"
+        save_state()
+        if uid not in user_locations:
+            await callback.message.answer(
+                f"📍 Выбран режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)». "
+                "Скинь свою геолокацию, чтобы я мог считать расстояние до других:",
+                reply_markup=build_location_request_keyboard(),
+            )
+            await callback.answer()
+            return
+    else:
+        f["distance"] = "any"
+        save_state()
     await callback.message.answer(
-        format_filters_summary(callback.from_user.id),
+        format_filters_summary(uid),
         reply_markup=build_settings_keyboard(),
     )
     await callback.answer()
