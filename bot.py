@@ -1,6 +1,7 @@
 import asyncio
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -9,22 +10,19 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
+CONTACT_REQUEST_TTL = 24 * 60 * 60
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Временное хранилище анкет в памяти: {user_id: {gender, name, age, city, looking_for, bio, photo_id, title}}
 profiles: dict[int, dict] = {}
-# Кого уже просмотрел пользователь: {viewer_id: set_of_target_ids}
 seen_profiles: dict[int, set[int]] = {}
-# Порядок просмотренных анкет для отката последнего свайпа: {viewer_id: [target_id, ...]}
-swipe_history: dict[int, list[int]] = {}
-# Кого лайкнул пользователь: {user_id: set_of_liked_ids}
 likes_given: dict[int, set[int]] = {}
-# Взаимные совпадения: {user_id: set_of_matched_ids}
 matches_by_user: dict[int, set[int]] = {}
-# Выбранный донатерский титул (показывается только по желанию): {user_id: title}
 user_titles: dict[int, str] = {}
+active_chats: dict[int, int] = {}
+blocked_users: dict[int, set[int]] = {}
+contact_requests: dict[tuple[int, int], dict] = {}
 
 DONATE_TITLES = {
     "title_sinner": "🥀 Грешник",
@@ -57,6 +55,36 @@ def keepalive() -> None:
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
+def format_contact_link(user_id: int, tg_user: types.User | None = None) -> str:
+    username = (tg_user.username if tg_user else None) or profiles.get(user_id, {}).get("username")
+    if username:
+        return f"@{username}"
+    return f"tg://user?id={user_id}"
+
+
+def is_blocked_between(user_a: int, user_b: int) -> bool:
+    return (user_b in blocked_users.get(user_a, set())) or (user_a in blocked_users.get(user_b, set()))
+
+
+def get_pending_request(requester_id: int, target_id: int) -> dict | None:
+    req = contact_requests.get((requester_id, target_id))
+    if not req or req.get("status") != "pending":
+        return None
+    if time.time() - req.get("created_at", 0) > CONTACT_REQUEST_TTL:
+        req["status"] = "expired"
+        return None
+    return req
+
+
+def build_anon_chat_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💌 Обменяться контактами", callback_data="contact_req_send")],
+            [InlineKeyboardButton(text="✖️ Отозвать запрос контактов", callback_data="contact_req_cancel")],
+        ]
+    )
+
+
 def format_profile_caption(
     profile: dict, header: str = "🃏 Твой козырь", user_id: int | None = None
 ) -> str:
@@ -75,7 +103,7 @@ def format_profile_caption(
 def get_next_candidate_id(viewer_id: int) -> int | None:
     viewed = seen_profiles.setdefault(viewer_id, set())
     for uid in profiles:
-        if uid != viewer_id and uid not in viewed:
+        if uid != viewer_id and uid not in viewed and not is_blocked_between(viewer_id, uid):
             return uid
     return None
 
@@ -115,6 +143,8 @@ def build_donate_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.from_user and message.from_user.id in profiles and message.from_user.username:
+        profiles[message.from_user.id]["username"] = message.from_user.username
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="😎 Погнали, я в деле", callback_data="reg_start")]
@@ -224,4 +254,349 @@ async def on_bio(message: types.Message, state: FSMContext):
 async def on_photo(message: types.Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await state.update_data(photo_id=photo_id)
-    data =
+    data = await state.get_data()
+    await state.clear()
+
+    uid = message.from_user.id if message.from_user else None
+    username = message.from_user.username if message.from_user else None
+    if uid is not None:
+        profiles[uid] = {
+            "gender": data.get("gender"),
+            "name": data.get("name"),
+            "age": data.get("age"),
+            "city": data.get("city"),
+            "looking_for": data.get("looking_for"),
+            "bio": data.get("bio"),
+            "photo_id": photo_id,
+            "username": username,
+        }
+
+    await message.answer_photo(
+        photo=photo_id,
+        caption=format_profile_caption(data, user_id=uid),
+    )
+
+
+@dp.message(RegForm.waiting_photo)
+async def on_photo_invalid(message: types.Message):
+    await message.answer("Нужно отправить именно картинку/фото, а не текст.")
+
+
+@dp.message(Command("me"))
+async def cmd_me(message: types.Message):
+    user_id = message.from_user.id if message.from_user else None
+    profile = profiles.get(user_id) if user_id is not None else None
+    if not profile:
+        await message.answer("🃏 Твой козырь пока пуст — сначала заполни анкету через /start.")
+        return
+    await message.answer_photo(
+        photo=profile["photo_id"],
+        caption=format_profile_caption(profile, user_id=user_id),
+    )
+
+
+@dp.message(Command("find"))
+async def cmd_find(message: types.Message):
+    if not message.from_user:
+        return
+    viewer_id = message.from_user.id
+    if viewer_id not in profiles:
+        await message.answer("Сначала заполни свою анкету через /start.")
+        return
+    candidate_id = get_next_candidate_id(viewer_id)
+    if candidate_id is None:
+        await message.answer("👀 Твой типаж: пока новых анкет нет.")
+        return
+    await send_candidate(message, viewer_id, candidate_id)
+
+
+@dp.callback_query(F.data.startswith(("swipe_like:", "swipe_skip:")))
+async def on_swipe(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    viewer_id = callback.from_user.id
+    action, raw_target_id = callback.data.split(":", 1)
+    target_id = int(raw_target_id)
+
+    seen_profiles.setdefault(viewer_id, set()).add(target_id)
+
+    if action == "swipe_like":
+        likes_given.setdefault(viewer_id, set()).add(target_id)
+        if viewer_id in likes_given.get(target_id, set()):
+            matches_by_user.setdefault(viewer_id, set()).add(target_id)
+            matches_by_user.setdefault(target_id, set()).add(viewer_id)
+            active_chats[viewer_id] = target_id
+            active_chats[target_id] = viewer_id
+            target_profile = profiles.get(target_id, {})
+            await callback.message.answer(
+                f"🍒 Взаимка с {target_profile.get('name', 'пользователем')}! Анонимный чат открыт.",
+                reply_markup=build_anon_chat_keyboard(),
+            )
+        else:
+            await callback.message.answer("❤️ Лайк отправлен")
+    else:
+        await callback.message.answer("👎 Пропущено")
+
+    next_id = get_next_candidate_id(viewer_id)
+    if next_id is None:
+        await callback.message.answer("Анкеты на сегодня закончились.")
+    else:
+        await send_candidate(callback.message, viewer_id, next_id)
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "contact_req_send")
+async def on_contact_request_send(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    requester_id = callback.from_user.id
+    target_id = active_chats.get(requester_id)
+
+    if not target_id:
+        await callback.message.answer("Сейчас нет активного анонимного чата.")
+        await callback.answer()
+        return
+
+    if is_blocked_between(requester_id, target_id):
+        await callback.message.answer("Обмен контактами запрещён из-за блокировки.")
+        await callback.answer()
+        return
+
+    if get_pending_request(requester_id, target_id) is not None:
+        await callback.message.answer("Запрос уже отправлен и ждёт ответа.")
+        await callback.answer()
+        return
+
+    if requester_id in profiles and callback.from_user.username:
+        profiles[requester_id]["username"] = callback.from_user.username
+
+    contact_requests[(requester_id, target_id)] = {
+        "created_at": time.time(),
+        "status": "pending",
+    }
+
+    await callback.message.answer(
+        "💋 Ну всё, романтик хренов, решил раскрыть карты?\n"
+        "Твой запрос отправлен. Теперь ждём, согласится ли это чудо узнать тебя поближе.\n"
+        "Не нервничай, ёбаный Купидон. 🖤"
+    )
+
+    target_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💋 Да, чёрт возьми", callback_data=f"contact_resp_yes:{requester_id}"),
+                InlineKeyboardButton(text="🖕 Нет, иди нахуй", callback_data=f"contact_resp_no:{requester_id}"),
+            ]
+        ]
+    )
+
+    try:
+        await bot.send_message(
+            chat_id=target_id,
+            text=(
+                "💌 ТУТ КТО-ТО ВЛЮБИЛСЯ?\n"
+                "Твой собеседник хочет обменяться с тобой Telegram-контактами.\n"
+                "Кажется, анонимности ему уже недостаточно, чёртов романтик.\n"
+                "Раскрываем карты?"
+            ),
+            reply_markup=target_keyboard,
+        )
+    except Exception:
+        pass
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "contact_req_cancel")
+async def on_contact_request_cancel(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    requester_id = callback.from_user.id
+    target_id = active_chats.get(requester_id)
+    if not target_id:
+        await callback.message.answer("Сейчас нет активного анонимного чата.")
+        await callback.answer()
+        return
+
+    req = get_pending_request(requester_id, target_id)
+    if not req:
+        await callback.message.answer("Активного запроса на обмен контактами нет.")
+        await callback.answer()
+        return
+
+    req["status"] = "canceled"
+    await callback.message.answer("Запрос на обмен контактами аннулирован.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith(("contact_resp_yes:", "contact_resp_no:")))
+async def on_contact_response(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = callback.from_user.id
+    action, raw_requester_id = callback.data.split(":", 1)
+    requester_id = int(raw_requester_id)
+
+    req = contact_requests.get((requester_id, target_id))
+    if not req or req.get("status") != "pending":
+        await callback.message.answer("Этот запрос уже закрыт, отменён или устарел.")
+        await callback.answer()
+        return
+
+    if is_blocked_between(requester_id, target_id):
+        req["status"] = "blocked"
+        await callback.message.answer("Обмен контактами запрещён.")
+        await callback.answer()
+        return
+
+    if action == "contact_resp_no":
+        req["status"] = "declined"
+        await callback.message.answer("Запрос закрыт.")
+        try:
+            await bot.send_message(
+                chat_id=requester_id,
+                text=(
+                    "🥀 Упс, романтик.\n"
+                    "Твой собеседник пока не готов раскрывать карты.\n"
+                    "Не расстраивайся, маленький ебанько. Продолжайте свою анонимную любовную хуйню. "
+                    "Возможно, ещё передумает. 🖤"
+                ),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    req["status"] = "accepted"
+    if target_id in profiles and callback.from_user.username:
+        profiles[target_id]["username"] = callback.from_user.username
+
+    requester_contact = format_contact_link(requester_id)
+    target_contact = format_contact_link(target_id, callback.from_user)
+
+    for uid, partner_contact in ((target_id, requester_contact), (requester_id, target_contact)):
+        text = (
+            "🖤 НУ ВСЁ, ВЫ ДВА БЕЗНАДЁЖНЫХ.\n"
+            "Кажется, анонимность закончилась, а ваша любовная катастрофа выходит на новый уровень.\n"
+            f"Держите контакты друг друга: {partner_contact}.\n"
+            "Только не проебите такую прекрасную возможность испортить друг другу жизнь. 💋\n"
+            "(Анонимный чат остаётся открытым.)"
+        )
+        if uid == target_id:
+            await callback.message.answer(text)
+        else:
+            try:
+                await bot.send_message(chat_id=uid, text=text)
+            except Exception:
+                pass
+
+    await callback.answer()
+
+
+@dp.message(Command("matches"))
+async def cmd_matches(message: types.Message):
+    if not message.from_user:
+        return
+    matched_ids = matches_by_user.get(message.from_user.id, set())
+    if not matched_ids:
+        await message.answer("🍒 Взаимок пока нет.")
+        return
+    lines = ["🍒 Твои взаимки:"]
+    for mid in matched_ids:
+        p = profiles.get(mid)
+        if p:
+            lines.append(f"• {p.get('name')}, {p.get('age')} — {p.get('city')}")
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("donate"))
+async def cmd_donate(message: types.Message):
+    await message.answer("Выбирай, за что сегодня отдаёшь свои кровные:", reply_markup=build_donate_keyboard())
+
+
+@dp.callback_query(F.data == "don_peek_likes")
+async def on_don_peek_likes(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("👁️ Подглядеть лайки — узнать, кому ты успел понравиться.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "don_boost")
+async def on_don_boost(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("🚀 Поднять анкету — пусть тебя заметят.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "don_extra_likes")
+async def on_don_extra_likes(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("🎯 Дополнительные лайки — расширить дневной лимит.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "don_undo_skip")
+async def on_don_undo_skip(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("🔄 Отменить дизлайк — вернуть случайно пропущенную анкету.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "don_vip")
+async def on_don_vip(callback: types.CallbackQuery):
+    if callback.message:
+        await callback.message.answer("🖤 Купить VIP — расширенные возможности без гарантии взаимности.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "don_support")
+async def on_don_support(callback: types.CallbackQuery):
+    if callback.message:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🥀 Грешник", callback_data="title_sinner")],
+                [InlineKeyboardButton(text="🖤 Покровитель тьмы", callback_data="title_patron")],
+                [InlineKeyboardButton(text="💋 Спонсор чужой любви", callback_data="title_sponsor")],
+                [InlineKeyboardButton(text="Без титула в профиле", callback_data="title_clear")],
+            ]
+        )
+        await callback.message.answer(
+            "🥀 Поддержать проект — просто потому что можешь, чёртов меценат. Выбери титул по желанию:",
+            reply_markup=keyboard,
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.in_(set(DONATE_TITLES.keys()) | {"title_clear"}))
+async def on_title_select(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    uid = callback.from_user.id
+    if callback.data == "title_clear":
+        user_titles.pop(uid, None)
+        await callback.message.answer("Титул скрыт из профиля.")
+    else:
+        chosen = DONATE_TITLES[callback.data]
+        user_titles[uid] = chosen
+        await callback.message.answer(f"Выбран титул: {chosen}.")
+    await callback.answer()
+
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    await message.answer("⚙️ Подкрутить")
+
+
+async def main() -> None:
+    threading.Thread(target=keepalive, daemon=True).start()
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
