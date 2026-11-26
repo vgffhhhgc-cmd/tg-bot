@@ -1,4 +1,6 @@
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
@@ -6,6 +8,19 @@ TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+
+def keepalive() -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, format: str, *args) -> None:
+            return
+
+    HTTPServer(("0.0.0.0", 10000), Handler).serve_forever()
 
 
 @dp.message(Command("start"))
@@ -39,6 +54,7 @@ async def cmd_settings(message: types.Message):
 
 
 async def main() -> None:
+    threading.Thread(target=keepalive, daemon=True).start()
     await dp.start_polling(bot)
 
 
