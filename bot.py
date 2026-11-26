@@ -1,8 +1,9 @@
 import asyncio
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -19,9 +20,13 @@ profiles: dict[int, dict] = {}
 seen_profiles: dict[int, set[int]] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
+# Дата мэтча для пары: {(user_a, user_b): "ДД.ММ.ГГГГ"}
+match_dates: dict[tuple[int, int], str] = {}
 user_titles: dict[int, str] = {}
+# Активные анонимные чаты: {user_id: partner_id}
 active_chats: dict[int, int] = {}
 blocked_users: dict[int, set[int]] = {}
+reports_log: list[dict] = []
 contact_requests: dict[tuple[int, int], dict] = {}
 
 DONATE_TITLES = {
@@ -56,14 +61,33 @@ def keepalive() -> None:
 
 
 def format_contact_link(user_id: int, tg_user: types.User | None = None) -> str:
-    username = (tg_user.username if tg_user else None) or profiles.get(user_id, {}).get("username")
+    username = None
+    if tg_user and tg_user.username:
+        username = tg_user.username
+    elif user_id in profiles:
+        username = profiles[user_id].get("username")
     if username:
         return f"@{username}"
     return f"tg://user?id={user_id}"
 
 
 def is_blocked_between(user_a: int, user_b: int) -> bool:
-    return (user_b in blocked_users.get(user_a, set())) or (user_a in blocked_users.get(user_b, set()))
+    return (user_b in blocked_users.get(user_a, set())) or (
+        user_a in blocked_users.get(user_b, set())
+    )
+
+
+def get_match_date(user_a: int, user_b: int) -> str:
+    pair = (min(user_a, user_b), max(user_a, user_b))
+    return match_dates.get(pair, datetime.now().strftime("%d.%m.%Y"))
+
+
+def record_match(user_a: int, user_b: int) -> None:
+    matches_by_user.setdefault(user_a, set()).add(user_b)
+    matches_by_user.setdefault(user_b, set()).add(user_a)
+    pair = (min(user_a, user_b), max(user_a, user_b))
+    if pair not in match_dates:
+        match_dates[pair] = datetime.now().strftime("%d.%m.%Y")
 
 
 def get_pending_request(requester_id: int, target_id: int) -> dict | None:
@@ -76,27 +100,91 @@ def get_pending_request(requester_id: int, target_id: int) -> dict | None:
     return req
 
 
-def build_anon_chat_keyboard() -> InlineKeyboardMarkup:
+def build_anon_chat_keyboard(partner_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💌 Обменяться контактами", callback_data="contact_req_send")],
-            [InlineKeyboardButton(text="✖️ Отозвать запрос контактов", callback_data="contact_req_cancel")],
+            [
+                InlineKeyboardButton(
+                    text="💌 Обменяться контактами", callback_data="contact_req_send"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✖️ Отозвать запрос контактов",
+                    callback_data="contact_req_cancel",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Заблокировать", callback_data=f"block_user:{partner_id}"
+                ),
+                InlineKeyboardButton(
+                    text="⚠️ Пожаловаться", callback_data=f"report_user:{partner_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="↩️ К взаимкам", callback_data="matches_back"
+                )
+            ],
+        ]
+    )
+
+
+def build_match_card_keyboard(target_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💌 Написать этому чуду",
+                    callback_data=f"match_chat:{target_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👀 Посмотреть анкету",
+                    callback_data=f"match_view:{target_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🖕 Удалить из взаимок",
+                    callback_data=f"match_del_ask:{target_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Заблокировать", callback_data=f"block_user:{target_id}"
+                ),
+                InlineKeyboardButton(
+                    text="⚠️ Пожаловаться", callback_data=f"report_user:{target_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="↩️ Вернуться назад", callback_data="matches_back"
+                )
+            ],
         ]
     )
 
 
 def format_profile_caption(
-    profile: dict, header: str = "🃏 Твой козырь", user_id: int | None = None
+    profile: dict,
+    header: str = "🃏 Твой козырь",
+    user_id: int | None = None,
+    match_date: str | None = None,
 ) -> str:
     title_line = ""
     if user_id is not None and user_titles.get(user_id):
         title_line = f"\nТитул: {user_titles[user_id]}"
+    date_line = f"\nДата мэтча: {match_date}" if match_date else ""
     return (
         f"{header}:\n"
         f"Имя: {profile.get('name')}, {profile.get('age')}\n"
         f"Город: {profile.get('city')}\n"
-        f"Пол: {profile.get('gender')} | Ищет: {profile.get('looking_for')}\n"
-        f"О себе: {profile.get('bio')}{title_line}"
+        f"Пол: {profile.get('gender')} | Ищет/интересы: {profile.get('looking_for')}\n"
+        f"О себе: {profile.get('bio')}{title_line}{date_line}"
     )
 
 
@@ -125,17 +213,88 @@ async def send_candidate(message: types.Message, viewer_id: int, target_id: int)
     )
 
 
+async def send_match_card(message: types.Message, viewer_id: int, target_id: int) -> None:
+    candidate = profiles.get(target_id)
+    if not candidate:
+        await message.answer("Анкета больше недоступна.")
+        return
+    caption = format_profile_caption(
+        candidate,
+        header="💌 Открыть переписку",
+        user_id=target_id,
+        match_date=get_match_date(viewer_id, target_id),
+    )
+    await message.answer_photo(
+        photo=candidate["photo_id"],
+        caption=caption,
+        reply_markup=build_match_card_keyboard(target_id),
+    )
+
+
+async def open_matches_section(message: types.Message, user_id: int) -> None:
+    intro = (
+        "💋 ТВОИ ЛЮБОВНЫЕ ПРОЁБЫ:\n"
+        "Люди, которым ты зачем-то понравился. Соболезную. 🖤\n\n"
+        "💋 Ну что, полез смотреть, кому ты успел вскружить голову?\n"
+        "Вот твои взаимки — коллекция людей, которые добровольно согласились "
+        "связать свою судьбу с твоей сомнительной персоной.\n"
+        "Выбирай, кого сегодня будешь сводить с ума. 🖤"
+    )
+    matched_ids = [
+        mid
+        for mid in matches_by_user.get(user_id, set())
+        if mid in profiles and not is_blocked_between(user_id, mid)
+    ]
+    await message.answer(intro)
+    if not matched_ids:
+        await message.answer("Взаимок пока нет. Иди крути анкеты через /find.")
+        return
+    for mid in matched_ids:
+        await send_match_card(message, user_id, mid)
+
+
+async def enter_anon_chat(message: types.Message, user_id: int, partner_id: int) -> None:
+    if is_blocked_between(user_id, partner_id):
+        await message.answer("Переписка недоступна из-за блокировки.")
+        return
+    active_chats[user_id] = partner_id
+    active_chats[partner_id] = user_id
+    partner_name = profiles.get(partner_id, {}).get("name", "собеседником")
+    text = (
+        f"Комната с {partner_name}:\n\n"
+        "🖤 Добро пожаловать в вашу маленькую комнату греха.\n"
+        "Здесь вы можете переписываться, флиртовать и нести друг другу романтическую хуйню.\n"
+        "Ваши личные аккаунты останутся скрытыми. Захотите раскрыть друг другу личности — "
+        "решите это вместе.\n"
+        "Любовь любовью, а безопасность никто не отменял, ебанько. 💋\n\n"
+        "Просто напиши сообщение — бот анонимно передаст его."
+    )
+    await message.answer(text, reply_markup=build_anon_chat_keyboard())
+
+
 def build_donate_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👁️ Подглядеть лайки", callback_data="don_peek_likes")],
+            [
+                InlineKeyboardButton(
+                    text="👁️ Подглядеть лайки", callback_data="don_peek_likes"
+                )
+            ],
             [InlineKeyboardButton(text="🚀 Поднять анкету", callback_data="don_boost")],
             [
-                InlineKeyboardButton(text="🎯 Доп. лайки", callback_data="don_extra_likes"),
-                InlineKeyboardButton(text="🔄 Отменить дизлайк", callback_data="don_undo_skip"),
+                InlineKeyboardButton(
+                    text="🎯 Доп. лайки", callback_data="don_extra_likes"
+                ),
+                InlineKeyboardButton(
+                    text="🔄 Отменить дизлайк", callback_data="don_undo_skip"
+                ),
             ],
             [InlineKeyboardButton(text="🖤 Купить VIP", callback_data="don_vip")],
-            [InlineKeyboardButton(text="🥀 Поддержать проект", callback_data="don_support")],
+            [
+                InlineKeyboardButton(
+                    text="🥀 Поддержать проект", callback_data="don_support"
+                )
+            ],
         ]
     )
 
@@ -219,7 +378,7 @@ async def on_city(message: types.Message, state: FSMContext):
             [InlineKeyboardButton(text="Без разницы", callback_data="seek_any")],
         ]
     )
-    await message.answer("Кого ищешь?", reply_markup=keyboard)
+    await message.answer("Кого ищешь / какие интересы?", reply_markup=keyboard)
 
 
 @dp.callback_query(
@@ -287,7 +446,9 @@ async def cmd_me(message: types.Message):
     user_id = message.from_user.id if message.from_user else None
     profile = profiles.get(user_id) if user_id is not None else None
     if not profile:
-        await message.answer("🃏 Твой козырь пока пуст — сначала заполни анкету через /start.")
+        await message.answer(
+            "🃏 Твой козырь пока пуст — сначала заполни анкету через /start."
+        )
         return
     await message.answer_photo(
         photo=profile["photo_id"],
@@ -323,16 +484,17 @@ async def on_swipe(callback: types.CallbackQuery):
 
     if action == "swipe_like":
         likes_given.setdefault(viewer_id, set()).add(target_id)
-        if viewer_id in likes_given.get(target_id, set()):
-            matches_by_user.setdefault(viewer_id, set()).add(target_id)
-            matches_by_user.setdefault(target_id, set()).add(viewer_id)
+        if viewer_id in likes_given.get(target_id, set()) and not is_blocked_between(
+            viewer_id, target_id
+        ):
+            record_match(viewer_id, target_id)
             active_chats[viewer_id] = target_id
             active_chats[target_id] = viewer_id
             target_profile = profiles.get(target_id, {})
             await callback.message.answer(
-                f"🍒 Взаимка с {target_profile.get('name', 'пользователем')}! Анонимный чат открыт.",
-                reply_markup=build_anon_chat_keyboard(),
+                f"🍒 Взаимка с {target_profile.get('name', 'пользователем')}!"
             )
+            await enter_anon_chat(callback.message, viewer_id, target_id)
         else:
             await callback.message.answer("❤️ Лайк отправлен")
     else:
@@ -344,6 +506,123 @@ async def on_swipe(callback: types.CallbackQuery):
     else:
         await send_candidate(callback.message, viewer_id, next_id)
 
+    await callback.answer()
+
+
+@dp.message(Command("matches"))
+async def cmd_matches(message: types.Message):
+    if not message.from_user:
+        return
+    await open_matches_section(message, message.from_user.id)
+
+
+@dp.callback_query(F.data == "matches_back")
+async def on_matches_back(callback: types.CallbackQuery):
+    if callback.from_user and callback.message:
+        await open_matches_section(callback.message, callback.from_user.id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("match_view:"))
+async def on_match_view(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    await send_match_card(callback.message, callback.from_user.id, target_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("match_chat:"))
+async def on_match_chat(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    await enter_anon_chat(callback.message, callback.from_user.id, target_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("match_del_ask:"))
+async def on_match_delete_ask(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    target_name = profiles.get(target_id, {}).get("name", "этого человека")
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, удалить взаимку",
+                    callback_data=f"match_del_yes:{target_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Отмена", callback_data=f"match_view:{target_id}"
+                ),
+            ]
+        ]
+    )
+    await callback.message.answer(
+        f"Точно удалить {target_name} из взаимок? Действие необратимо.",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("match_del_yes:"))
+async def on_match_delete_yes(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    user_id = callback.from_user.id
+    target_id = int(callback.data.split(":", 1)[1])
+    matches_by_user.setdefault(user_id, set()).discard(target_id)
+    matches_by_user.setdefault(target_id, set()).discard(user_id)
+    if active_chats.get(user_id) == target_id:
+        active_chats.pop(user_id, None)
+    if active_chats.get(target_id) == user_id:
+        active_chats.pop(target_id, None)
+    await callback.message.answer("Удалено из взаимок.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("block_user:"))
+async def on_block_user(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    user_id = callback.from_user.id
+    target_id = int(callback.data.split(":", 1)[1])
+    blocked_users.setdefault(user_id, set()).add(target_id)
+    matches_by_user.setdefault(user_id, set()).discard(target_id)
+    matches_by_user.setdefault(target_id, set()).discard(user_id)
+    if active_chats.get(user_id) == target_id:
+        active_chats.pop(user_id, None)
+    if active_chats.get(target_id) == user_id:
+        active_chats.pop(target_id, None)
+    contact_requests.pop((user_id, target_id), None)
+    contact_requests.pop((target_id, user_id), None)
+    await callback.message.answer(
+        "Пользователь заблокирован. Переписка и обмен контактами закрыты."
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("report_user:"))
+async def on_report_user(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    target_id = int(callback.data.split(":", 1)[1])
+    reports_log.append(
+        {
+            "reporter_id": callback.from_user.id,
+            "target_id": target_id,
+            "timestamp": time.time(),
+        }
+    )
+    await callback.message.answer("Жалоба зафиксирована.")
     await callback.answer()
 
 
@@ -387,8 +666,14 @@ async def on_contact_request_send(callback: types.CallbackQuery):
     target_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="💋 Да, чёрт возьми", callback_data=f"contact_resp_yes:{requester_id}"),
-                InlineKeyboardButton(text="🖕 Нет, иди нахуй", callback_data=f"contact_resp_no:{requester_id}"),
+                InlineKeyboardButton(
+                    text="💋 Да, чёрт возьми",
+                    callback_data=f"contact_resp_yes:{requester_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🖕 Нет, иди нахуй",
+                    callback_data=f"contact_resp_no:{requester_id}",
+                ),
             ]
         ]
     )
@@ -479,7 +764,10 @@ async def on_contact_response(callback: types.CallbackQuery):
     requester_contact = format_contact_link(requester_id)
     target_contact = format_contact_link(target_id, callback.from_user)
 
-    for uid, partner_contact in ((target_id, requester_contact), (requester_id, target_contact)):
+    for uid, partner_contact in (
+        (target_id, requester_contact),
+        (requester_id, target_contact),
+    ):
         text = (
             "🖤 НУ ВСЁ, ВЫ ДВА БЕЗНАДЁЖНЫХ.\n"
             "Кажется, анонимность закончилась, а ваша любовная катастрофа выходит на новый уровень.\n"
@@ -498,31 +786,20 @@ async def on_contact_response(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(Command("matches"))
-async def cmd_matches(message: types.Message):
-    if not message.from_user:
-        return
-    matched_ids = matches_by_user.get(message.from_user.id, set())
-    if not matched_ids:
-        await message.answer("🍒 Взаимок пока нет.")
-        return
-    lines = ["🍒 Твои взаимки:"]
-    for mid in matched_ids:
-        p = profiles.get(mid)
-        if p:
-            lines.append(f"• {p.get('name')}, {p.get('age')} — {p.get('city')}")
-    await message.answer("\n".join(lines))
-
-
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
-    await message.answer("Выбирай, за что сегодня отдаёшь свои кровные:", reply_markup=build_donate_keyboard())
+    await message.answer(
+        "Выбирай, за что сегодня отдаёшь свои кровные:",
+        reply_markup=build_donate_keyboard(),
+    )
 
 
 @dp.callback_query(F.data == "don_peek_likes")
 async def on_don_peek_likes(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("👁️ Подглядеть лайки — узнать, кому ты успел понравиться.")
+        await callback.message.answer(
+            "👁️ Подглядеть лайки — узнать, кому ты успел понравиться."
+        )
     await callback.answer()
 
 
@@ -536,21 +813,27 @@ async def on_don_boost(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "don_extra_likes")
 async def on_don_extra_likes(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("🎯 Дополнительные лайки — расширить дневной лимит.")
+        await callback.message.answer(
+            "🎯 Дополнительные лайки — расширить дневной лимит."
+        )
     await callback.answer()
 
 
 @dp.callback_query(F.data == "don_undo_skip")
 async def on_don_undo_skip(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("🔄 Отменить дизлайк — вернуть случайно пропущенную анкету.")
+        await callback.message.answer(
+            "🔄 Отменить дизлайк — вернуть случайно пропущенную анкету."
+        )
     await callback.answer()
 
 
 @dp.callback_query(F.data == "don_vip")
 async def on_don_vip(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("🖤 Купить VIP — расширенные возможности без гарантии взаимности.")
+        await callback.message.answer(
+            "🖤 Купить VIP — расширенные возможности без гарантии взаимности."
+        )
     await callback.answer()
 
 
@@ -560,9 +843,21 @@ async def on_don_support(callback: types.CallbackQuery):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🥀 Грешник", callback_data="title_sinner")],
-                [InlineKeyboardButton(text="🖤 Покровитель тьмы", callback_data="title_patron")],
-                [InlineKeyboardButton(text="💋 Спонсор чужой любви", callback_data="title_sponsor")],
-                [InlineKeyboardButton(text="Без титула в профиле", callback_data="title_clear")],
+                [
+                    InlineKeyboardButton(
+                        text="🖤 Покровитель тьмы", callback_data="title_patron"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="💋 Спонсор чужой любви", callback_data="title_sponsor"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Без титула в профиле", callback_data="title_clear"
+                    )
+                ],
             ]
         )
         await callback.message.answer(
@@ -591,6 +886,26 @@ async def on_title_select(callback: types.CallbackQuery):
 @dp.message(Command("settings"))
 async def cmd_settings(message: types.Message):
     await message.answer("⚙️ Подкрутить")
+
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def on_anon_message(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None or not message.from_user:
+        return
+    sender_id = message.from_user.id
+    partner_id = active_chats.get(sender_id)
+    if not partner_id:
+        return
+    if is_blocked_between(sender_id, partner_id):
+        await message.answer("Сообщение не отправлено: чат заблокирован.")
+        return
+    try:
+        await bot.send_message(
+            chat_id=partner_id,
+            text=f"💌 Анонимно:\n{message.text}",
+        )
+    except Exception:
+        await message.answer("Не удалось доставить сообщение собеседнику.")
 
 
 async def main() -> None:
