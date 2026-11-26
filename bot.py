@@ -13,6 +13,9 @@ TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
+# Временное хранилище анкет в памяти: {user_id: {gender, name, age, city, looking_for, bio, photo_id}}
+profiles: dict[int, dict] = {}
+
 
 class RegForm(StatesGroup):
     waiting_name = State()
@@ -36,6 +39,18 @@ def keepalive() -> None:
             return
 
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+
+
+def format_profile_caption(profile: dict) -> str:
+    return (
+        f"🃏 Твой козырь:\n"
+        f"Пол: {profile.get('gender')}\n"
+        f"Имя: {profile.get('name')}\n"
+        f"Возраст: {profile.get('age')}\n"
+        f"Город: {profile.get('city')}\n"
+        f"Ищет: {profile.get('looking_for')}\n"
+        f"О себе: {profile.get('bio')}"
+    )
 
 
 @dp.message(Command("start"))
@@ -152,17 +167,21 @@ async def on_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo_id=photo_id)
     data = await state.get_data()
     await state.clear()
+
+    if message.from_user:
+        profiles[message.from_user.id] = {
+            "gender": data.get("gender"),
+            "name": data.get("name"),
+            "age": data.get("age"),
+            "city": data.get("city"),
+            "looking_for": data.get("looking_for"),
+            "bio": data.get("bio"),
+            "photo_id": photo_id,
+        }
+
     await message.answer_photo(
-        photo=data.get("photo_id"),
-        caption=(
-            f"Записала:\n"
-            f"Пол: {data.get('gender')}\n"
-            f"Имя: {data.get('name')}\n"
-            f"Возраст: {data.get('age')}\n"
-            f"Город: {data.get('city')}\n"
-            f"Ищет: {data.get('looking_for')}\n"
-            f"О себе: {data.get('bio')}"
-        ),
+        photo=photo_id,
+        caption=format_profile_caption(data),
     )
 
 
@@ -173,7 +192,15 @@ async def on_photo_invalid(message: types.Message):
 
 @dp.message(Command("me"))
 async def cmd_me(message: types.Message):
-    await message.answer("🃏 Твой козырь")
+    user_id = message.from_user.id if message.from_user else None
+    profile = profiles.get(user_id) if user_id is not None else None
+    if not profile:
+        await message.answer("🃏 Твой козырь пока пуст — сначала заполни анкету через /start.")
+        return
+    await message.answer_photo(
+        photo=profile["photo_id"],
+        caption=format_profile_caption(profile),
+    )
 
 
 @dp.message(Command("find"))
