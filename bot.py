@@ -12,6 +12,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 CONTACT_REQUEST_TTL = 24 * 60 * 60
+GENERAL_CHAT_URL = "https://t.me/+0zfQwL8xH9diY2My"
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
 
@@ -29,15 +30,11 @@ blocked_users: dict[int, set[int]] = {}
 contact_requests: dict[tuple[int, int], dict] = {}
 user_filters: dict[int, dict] = {}
 
-# История сообщений между пользователями для материалов жалобы:
-# {(min_id, max_id): [{"sender_id": int, "text": str, "time": str}, ...]}
 chat_history: dict[tuple[int, int], list[dict]] = {}
-
-# Модерация и санкции
 reports_by_id: dict[int, dict] = {}
 report_counter: int = 1041
 user_warnings: dict[int, int] = {}
-user_restrictions: dict[int, dict] = {}  # {user_id: {"until": float, "banned": bool}}
+user_restrictions: dict[int, dict] = {}
 sos_requests: list[dict] = []
 
 DONATE_TITLES = {
@@ -157,6 +154,11 @@ def build_settings_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="💬 ОБЩИЙ ЧАТ", callback_data="open_general_chat"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔄 Сбросить настройки", callback_data="flt_reset"
                 ),
                 InlineKeyboardButton(
@@ -178,7 +180,6 @@ def matches_gender_filter(pref: str, candidate_gender: str | None) -> bool:
 
 
 def is_same_age_cohort(age_a: int, age_b: int) -> bool:
-    # Не допускаем романтических мэтчей между несовершеннолетними (<18) и взрослыми (18+)
     return (age_a < 18) == (age_b < 18)
 
 
@@ -1135,7 +1136,11 @@ async def cmd_mod_panel(message: types.Message):
 
 @dp.callback_query(F.data.startswith("mod_inspect:"))
 async def on_mod_inspect(callback: types.CallbackQuery):
-    if not callback.from_user or callback.from_user.id not in ADMIN_IDS or not callback.message:
+    if (
+        not callback.from_user
+        or callback.from_user.id not in ADMIN_IDS
+        or not callback.message
+    ):
         await callback.answer()
         return
     rep_id = int(callback.data.split(":", 1)[1])
@@ -1146,7 +1151,9 @@ async def on_mod_inspect(callback: types.CallbackQuery):
     target_id = rep["target_id"]
     prof = profiles.get(target_id)
     prof_text = (
-        format_profile_caption(prof, header=f"Анкета ID {target_id}", user_id=target_id)
+        format_profile_caption(
+            prof, header=f"Анкета ID {target_id}", user_id=target_id
+        )
         if prof
         else f"Анкета ID {target_id} отсутствует в памяти."
     )
@@ -1169,7 +1176,11 @@ async def on_mod_inspect(callback: types.CallbackQuery):
     F.data.startswith(("mod_warn:", "mod_limit:", "mod_ban:", "mod_reject:"))
 )
 async def on_mod_decision(callback: types.CallbackQuery):
-    if not callback.from_user or callback.from_user.id not in ADMIN_IDS or not callback.message:
+    if (
+        not callback.from_user
+        or callback.from_user.id not in ADMIN_IDS
+        or not callback.message
+    ):
         await callback.answer()
         return
     action, raw_id = callback.data.split(":", 1)
@@ -1566,6 +1577,28 @@ async def cmd_settings(message: types.Message, state: FSMContext):
         format_filters_summary(message.from_user.id),
         reply_markup=build_settings_keyboard(),
     )
+
+
+@dp.callback_query(F.data == "open_general_chat")
+async def on_open_general_chat(callback: types.CallbackQuery):
+    if callback.message:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="💬 Зайти в «место сбора странных»",
+                        url=GENERAL_CHAT_URL,
+                    )
+                ]
+            ]
+        )
+        await callback.message.answer(
+            "💬 ОБЩИЙ ЧАТ\n"
+            "Хочешь пообщаться? Заходи к нам. Здесь можно познакомиться с новыми людьми, "
+            "обсудить всё на свете и просто провести время.",
+            reply_markup=kb,
+        )
+    await callback.answer()
 
 
 @dp.callback_query(F.data == "flt_open_menu")
