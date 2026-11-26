@@ -301,4 +301,35 @@ async def cmd_matches(message: types.Message):
 
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
-    await
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="100 ₽", callback_data="donate_100"),
+                InlineKeyboardButton(text="300 ₽", callback_data="donate_300"),
+                InlineKeyboardButton(text="500 ₽", callback_data="donate_500"),
+            ]
+        ]
+    )
+    await message.answer("💸 Задонатить на развитие бота — выбери вариант:", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data.in_({"donate_100", "donate_300", "donate_500"}))
+async def on_donate_choice(callback: types.CallbackQuery):
+    amount = callback.data.split("_", 1)[1]
+    if callback.message:
+        await callback.message.answer(f"💸 Выбран донат {amount} ₽. Спасибо за поддержку!")
+    await callback.answer()
+
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    await message.answer("⚙️ Подкрутить")
+
+
+async def main() -> None:
+    threading.Thread(target=keepalive, daemon=True).start()
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
