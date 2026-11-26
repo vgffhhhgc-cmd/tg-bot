@@ -1798,4 +1798,173 @@ async def on_custom_age_range(message: types.Message, state: FSMContext):
         return
     raw = (message.text or "").replace("—", "-").replace("–", "-").strip()
     parts = [p.strip() for p in raw.split("-")]
-    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        await message.answer("Напиши диапазон от 16, например: 18-25.")
+        return
+    age_min = int(parts[0])
+    age_max = int(parts[1])
+    if age_min < 16 or age_max > 99 or age_min > age_max:
+        await message.answer("Возраст должен быть от 16 до 99, а начало не больше конца.")
+        return
+    await state.clear()
+    f = get_user_filter(message.from_user.id)
+    f["age_min"] = age_min
+    f["age_max"] = age_max
+    await message.answer(
+        format_filters_summary(message.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "flt_geo_menu")
+async def on_flt_geo_menu(callback: types.CallbackQuery):
+    if callback.message:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📍 Любой город", callback_data="set_city:any"
+                    ),
+                    InlineKeyboardButton(
+                        text="📍 Только мой город", callback_data="set_city:my"
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🌍 Дистанция: Без ограничений",
+                        callback_data="set_dist:any",
+                    ),
+                    InlineKeyboardButton(
+                        text="🌍 Дистанция: Поблизости", callback_data="set_dist:near"
+                    ),
+                ],
+            ]
+        )
+        await callback.message.answer(
+            "📍 Выбери город и дистанцию:", reply_markup=keyboard
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_city:"))
+async def on_set_city(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    mode = callback.data.split(":", 1)[1]
+    f = get_user_filter(callback.from_user.id)
+    f["city_mode"] = "my" if mode == "my" else "any"
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_dist:"))
+async def on_set_dist(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    dist = callback.data.split(":", 1)[1]
+    f = get_user_filter(callback.from_user.id)
+    f["distance"] = "near" if dist == "near" else "any"
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_expand_age")
+async def on_flt_expand_age(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    f = get_user_filter(callback.from_user.id)
+    prof = profiles.get(callback.from_user.id, {})
+    min_allowed = 16 if (prof.get("age") or 18) < 18 else 18
+    f["age_min"] = min_allowed
+    f["age_max"] = min(99, max(f["age_max"] + 5, 30))
+    await callback.message.answer(
+        f"🎂 Диапазон расширен до {f['age_min']}–{f['age_max']} лет."
+    )
+    candidate_id = get_next_candidate_id(callback.from_user.id)
+    if candidate_id is None:
+        await send_no_candidates_prompt(callback.message, callback.from_user.id)
+    else:
+        await send_candidate(callback.message, callback.from_user.id, candidate_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_any_city")
+async def on_flt_any_city(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    f = get_user_filter(callback.from_user.id)
+    f["city_mode"] = "any"
+    await callback.message.answer("📍 Теперь поиск по любому городу.")
+    candidate_id = get_next_candidate_id(callback.from_user.id)
+    if candidate_id is None:
+        await send_no_candidates_prompt(callback.message, callback.from_user.id)
+    else:
+        await send_candidate(callback.message, callback.from_user.id, candidate_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_reset")
+async def on_flt_reset(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user and callback.message:
+        user_filters[callback.from_user.id] = get_default_filters()
+        await callback.message.answer(
+            format_filters_summary(callback.from_user.id),
+            reply_markup=build_settings_keyboard(),
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_save")
+async def on_flt_save(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user and callback.message:
+        await callback.message.answer(
+            "🖤 Изменения сохранены. Запускай /find — дальше подбираю по ним."
+        )
+    await callback.answer()
+
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def on_anon_message(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None or not message.from_user:
+        return
+    sender_id = message.from_user.id
+    rest_msg = get_restriction_status(sender_id)
+    if rest_msg:
+        await message.answer(rest_msg)
+        return
+    partner_id = active_chats.get(sender_id)
+    if not partner_id:
+        return
+    if is_blocked_between(sender_id, partner_id):
+        await message.answer("Сообщение не отправлено: чат заблокирован.")
+        return
+    msg_text = message.text or ""
+    record_chat_message(sender_id, partner_id, msg_text)
+    try:
+        await bot.send_message(
+            chat_id=partner_id,
+            text=f"💌 Анонимно:\n{msg_text}",
+        )
+    except Exception:
+        await message.answer("Не удалось доставить сообщение собеседнику.")
+
+
+async def main() -> None:
+    threading.Thread(target=keepalive, daemon=True).start()
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
