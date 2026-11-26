@@ -16,6 +16,7 @@ dp = Dispatcher()
 
 class RegForm(StatesGroup):
     waiting_name = State()
+    waiting_age = State()
 
 
 def keepalive() -> None:
@@ -74,10 +75,28 @@ async def on_name(message: types.Message, state: FSMContext):
         await message.answer("Напиши имя текстом.")
         return
     await state.update_data(name=name)
+    await state.set_state(RegForm.waiting_age)
+    await message.answer("Сколько тебе лет? (только число, от 16)")
+
+
+@dp.message(RegForm.waiting_age)
+async def on_age(message: types.Message, state: FSMContext):
+    raw_age = (message.text or "").strip()
+    if not raw_age.isdigit():
+        await message.answer("Напиши возраст числом, например: 21.")
+        return
+    age = int(raw_age)
+    if age < 16 or age > 99:
+        await message.answer("Доступно только от 16 лет. Введи корректный возраст.")
+        return
+    await state.update_data(age=age)
     data = await state.get_data()
     await state.clear()
     await message.answer(
-        f"Записала:\nПол: {data.get('gender')}\nИмя: {data.get('name')}"
+        f"Записала:\n"
+        f"Пол: {data.get('gender')}\n"
+        f"Имя: {data.get('name')}\n"
+        f"Возраст: {data.get('age')}"
     )
 
 
