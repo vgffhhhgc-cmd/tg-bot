@@ -4,6 +4,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 
@@ -28,7 +29,12 @@ def keepalive() -> None:
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("Привет! Команда /start сработала.")
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="😎 Погнали, я в деле", callback_data="reg_start")]
+        ]
+    )
+    await message.answer("Привет! Готова начать?", reply_markup=keyboard)
 
 
 @dp.message(Command("me"))
