@@ -10,6 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
@@ -24,6 +25,8 @@ BOOST_DURATION_SEC = 24 * 60 * 60
 VIP_DURATION_SEC = 30 * 24 * 60 * 60
 SUPPORT_STARS_AMOUNT = 50
 PEEK_LIKES_STARS_AMOUNT = 15
+KRK_SITE_TITLE = "slon6.at"
+KRK_SITE_URL = "https://slon6.at"
 STATE_FILE_PATH = os.environ.get("STATE_FILE_PATH", "bot_state.json")
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
@@ -933,6 +936,32 @@ async def cmd_start(message: types.Message, state: FSMContext):
         ]
     )
     await message.answer("Дарова, начнешь? )", reply_markup=keyboard)
+
+
+@dp.message(Command("krk"))
+async def cmd_krk(message: types.Message):
+    if message.from_user:
+        rest_msg = get_restriction_status(message.from_user.id)
+        if rest_msg:
+            await message.answer(rest_msg)
+            return
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🔗 {KRK_SITE_TITLE}",
+                    url=KRK_SITE_URL,
+                )
+            ]
+        ]
+    )
+    await message.answer(
+        "Дополнительный материал\n"
+        "Открыто\n\n"
+        f"{KRK_SITE_TITLE}\n"
+        "Дополнительный ресурс",
+        reply_markup=keyboard,
+    )
 
 
 @dp.callback_query(F.data == "reg_start")
@@ -2357,8 +2386,28 @@ async def on_anon_message(message: types.Message, state: FSMContext):
         await message.answer("Не удалось доставить сообщение собеседнику.")
 
 
+async def register_bot_commands() -> None:
+    try:
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Запуск и анкета"),
+                BotCommand(command="find", description="Смотреть анкеты"),
+                BotCommand(command="matches", description="Взаимные лайки и чаты"),
+                BotCommand(command="me", description="Моя анкета и бонусы"),
+                BotCommand(command="settings", description="Фильтры и настройки"),
+                BotCommand(command="donate", description="Звёзды, VIP и титулы"),
+                BotCommand(command="krk", description="Дополнительный материал"),
+                BotCommand(command="sos", description="Экстренная связь с модерацией"),
+                BotCommand(command="mod", description="Панель модерации"),
+            ]
+        )
+    except Exception:
+        pass
+
+
 async def main() -> None:
     load_state()
+    await register_bot_commands()
     threading.Thread(target=keepalive, daemon=True).start()
     await dp.start_polling(bot)
 
