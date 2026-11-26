@@ -4,12 +4,18 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+
+class RegForm(StatesGroup):
+    waiting_name = State()
 
 
 def keepalive() -> None:
@@ -28,7 +34,8 @@ def keepalive() -> None:
 
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="😎 Погнали, я в деле", callback_data="reg_start")]
@@ -52,10 +59,26 @@ async def on_reg_start(callback: types.CallbackQuery):
 
 
 @dp.callback_query(F.data.in_({"gender_f", "gender_m"}))
-async def on_gender(callback: types.CallbackQuery):
+async def on_gender(callback: types.CallbackQuery, state: FSMContext):
     gender_label = "Девушка" if callback.data == "gender_f" else "Парень"
-    await callback.message.answer(f"Пол сохранён: {gender_label}. Следующий шаг.")
+    await state.update_data(gender=gender_label)
+    await state.set_state(RegForm.waiting_name)
+    await callback.message.answer(f"Пол сохранён: {gender_label}. Как тебя зовут?")
     await callback.answer()
+
+
+@dp.message(RegForm.waiting_name)
+async def on_name(message: types.Message, state: FSMContext):
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Напиши имя текстом.")
+        return
+    await state.update_data(name=name)
+    data = await state.get_data()
+    await state.clear()
+    await message.answer(
+        f"Записала:\nПол: {data.get('gender')}\nИмя: {data.get('name')}"
+    )
 
 
 @dp.message(Command("me"))
@@ -90,4 +113,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
