@@ -2,7 +2,7 @@ import asyncio
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -35,6 +35,27 @@ async def cmd_start(message: types.Message):
         ]
     )
     await message.answer("Привет! Готова начать?", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "reg_start")
+async def on_reg_start(callback: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Девушка", callback_data="gender_f"),
+                InlineKeyboardButton(text="Парень", callback_data="gender_m"),
+            ]
+        ]
+    )
+    await callback.message.answer("Выбери свой пол:", reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.in_({"gender_f", "gender_m"}))
+async def on_gender(callback: types.CallbackQuery):
+    gender_label = "Девушка" if callback.data == "gender_f" else "Парень"
+    await callback.message.answer(f"Пол сохранён: {gender_label}. Следующий шаг.")
+    await callback.answer()
 
 
 @dp.message(Command("me"))
