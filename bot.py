@@ -20,14 +20,15 @@ profiles: dict[int, dict] = {}
 seen_profiles: dict[int, set[int]] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
-# Дата мэтча для пары: {(user_a, user_b): "ДД.ММ.ГГГГ"}
 match_dates: dict[tuple[int, int], str] = {}
 user_titles: dict[int, str] = {}
-# Активные анонимные чаты: {user_id: partner_id}
 active_chats: dict[int, int] = {}
 blocked_users: dict[int, set[int]] = {}
 reports_log: list[dict] = []
 contact_requests: dict[tuple[int, int], dict] = {}
+# Фильтры поиска по пользователям:
+# {user_id: {"gender_pref": "all"|"m"|"f", "age_min": int, "age_max": int, "city_mode": "any"|"my", "distance": "any"|"near"}}
+user_filters: dict[int, dict] = {}
 
 DONATE_TITLES = {
     "title_sinner": "🥀 Грешник",
@@ -43,6 +44,116 @@ class RegForm(StatesGroup):
     waiting_looking_for = State()
     waiting_bio = State()
     waiting_photo = State()
+
+
+class FilterForm(StatesGroup):
+    waiting_age_range = State()
+
+
+def get_default_filters() -> dict:
+    return {
+        "gender_pref": "all",  # all | m | f
+        "age_min": 18,
+        "age_max": 25,
+        "city_mode": "any",  # any | my
+        "distance": "any",  # any | near
+    }
+
+
+def get_user_filter(user_id: int) -> dict:
+    if user_id not in user_filters:
+        user_filters[user_id] = get_default_filters()
+    return user_filters[user_id]
+
+
+def format_filters_summary(user_id: int) -> str:
+    f = get_user_filter(user_id)
+    gender_map = {"all": "Всех подряд", "m": "Только парней", "f": "Только девушек"}
+    city_map = {"any": "Любой город", "my": "Только мой город"}
+    dist_map = {"any": "Без ограничений", "near": "Поблизости"}
+    return (
+        "⚙️ ТВОИ НАСТРОЙКИ:\n"
+        "Давай подберём тебе кого-нибудь, пока ты окончательно не ебанулся от одиночества.\n\n"
+        f"💋 Кого ищем: {gender_map.get(f['gender_pref'], 'Всех подряд')}\n"
+        f"🎂 Возрастной диапазон: {f['age_min']} — {f['age_max']} лет\n"
+        f"📍 Город: {city_map.get(f['city_mode'], 'Любой город')}\n"
+        f"🌍 Дистанция: {dist_map.get(f['distance'], 'Без ограничений')}"
+    )
+
+
+def build_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💋 Кого ищем?", callback_data="flt_gender_menu")],
+            [
+                InlineKeyboardButton(
+                    text="🎂 Возрастной диапазон", callback_data="flt_age_menu"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📍 Город и расстояние", callback_data="flt_geo_menu"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Сбросить настройки", callback_data="flt_reset"
+                ),
+                InlineKeyboardButton(
+                    text="🖤 Сохранить изменения", callback_data="flt_save"
+                ),
+            ],
+        ]
+    )
+
+
+def matches_gender_filter(pref: str, candidate_gender: str | None) -> bool:
+    if pref == "all":
+        return True
+    if pref == "m":
+        return candidate_gender == "Парень"
+    if pref == "f":
+        return candidate_gender == "Девушка"
+    return True
+
+
+def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
+    viewer = profiles.get(viewer_id)
+    candidate = profiles.get(candidate_id)
+    if not viewer or not candidate:
+        return False
+
+    vf = get_user_filter(viewer_id)
+    cf = get_user_filter(candidate_id)
+
+    v_age = candidate.get("age")
+    c_age = viewer.get("age")
+    if not isinstance(v_age, int) or not isinstance(c_age, int):
+        return False
+
+    # 1. Кандидат подходит под фильтры смотрящего
+    if not matches_gender_filter(vf["gender_pref"], candidate.get("gender")):
+        return False
+    if not (vf["age_min"] <= v_age <= vf["age_max"]):
+        return False
+    if vf["city_mode"] == "my":
+        v_city = (viewer.get("city") or "").strip().lower()
+        c_city = (candidate.get("city") or "").strip().lower()
+        if not v_city or v_city != c_city:
+            return False
+
+    # 2. Смотрящий подходит под фильтры кандидата (взаимные предпочтения)
+    if not matches_gender_filter(cf["gender_pref"], viewer.get("gender")):
+        return False
+    if not (cf["age_min"] <= c_age <= cf["age_max"]):
+        return False
+    if cf["city_mode"] == "my":
+        v_city = (viewer.get("city") or "").strip().lower()
+        c_city = (candidate.get("city") or "").strip().lower()
+        if not c_city or v_city != c_city:
+            return False
+
+    return True
 
 
 def keepalive() -> None:
@@ -191,9 +302,58 @@ def format_profile_caption(
 def get_next_candidate_id(viewer_id: int) -> int | None:
     viewed = seen_profiles.setdefault(viewer_id, set())
     for uid in profiles:
-        if uid != viewer_id and uid not in viewed and not is_blocked_between(viewer_id, uid):
+        if uid == viewer_id or uid in viewed or is_blocked_between(viewer_id, uid):
+            continue
+        if is_mutual_match_criteria(viewer_id, uid):
             return uid
     return None
+
+
+def has_any_matching_candidate(viewer_id: int) -> bool:
+    for uid in profiles:
+        if uid == viewer_id or is_blocked_between(viewer_id, uid):
+            continue
+        if is_mutual_match_criteria(viewer_id, uid):
+            return True
+    return False
+
+
+async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> None:
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎂 Расширить возраст", callback_data="flt_expand_age"
+                ),
+                InlineKeyboardButton(
+                    text="📍 Убрать фильтр города", callback_data="flt_any_city"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔁 Смотреть заново", callback_data="find_replay_seen"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⚙️ Открыть настройки", callback_data="flt_open_menu"
+                )
+            ],
+        ]
+    )
+    if has_any_matching_candidate(viewer_id):
+        text = (
+            "👀 Подходящие анкеты по текущим фильтрам закончились.\n"
+            "Настройки не сбрасываю без твоего согласия — можешь начать просмотр заново "
+            "или подкрутить фильтры."
+        )
+    else:
+        text = (
+            "👀 Подходящих под взаимные фильтры анкет сейчас нет.\n"
+            "Настройки не меняю сам — можешь расширить возраст, открыть любой город "
+            "или заглянуть в /settings."
+        )
+    await message.answer(text, reply_markup=keyboard)
 
 
 async def send_candidate(message: types.Message, viewer_id: int, target_id: int) -> None:
@@ -269,7 +429,7 @@ async def enter_anon_chat(message: types.Message, user_id: int, partner_id: int)
         "Любовь любовью, а безопасность никто не отменял, ебанько. 💋\n\n"
         "Просто напиши сообщение — бот анонимно передаст его."
     )
-    await message.answer(text, reply_markup=build_anon_chat_keyboard())
+    await message.answer(text, reply_markup=build_anon_chat_keyboard(partner_id))
 
 
 def build_donate_keyboard() -> InlineKeyboardMarkup:
@@ -302,8 +462,11 @@ def build_donate_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    if message.from_user and message.from_user.id in profiles and message.from_user.username:
-        profiles[message.from_user.id]["username"] = message.from_user.username
+    if message.from_user:
+        uid = message.from_user.id
+        get_user_filter(uid)
+        if uid in profiles and message.from_user.username:
+            profiles[uid]["username"] = message.from_user.username
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="😎 Погнали, я в деле", callback_data="reg_start")]
@@ -343,7 +506,7 @@ async def on_name(message: types.Message, state: FSMContext):
         return
     await state.update_data(name=name)
     await state.set_state(RegForm.waiting_age)
-    await message.answer("Сколько тебе лет? (только число, от 16)")
+    await message.answer("Сколько тебе лет? (только число, от 18)")
 
 
 @dp.message(RegForm.waiting_age)
@@ -353,8 +516,8 @@ async def on_age(message: types.Message, state: FSMContext):
         await message.answer("Напиши возраст числом, например: 21.")
         return
     age = int(raw_age)
-    if age < 16 or age > 99:
-        await message.answer("Доступно только от 16 лет. Введи корректный возраст.")
+    if age < 18 or age > 99:
+        await message.answer("Доступно только с 18 лет. Введи корректный возраст.")
         return
     await state.update_data(age=age)
     await state.set_state(RegForm.waiting_city)
@@ -419,6 +582,7 @@ async def on_photo(message: types.Message, state: FSMContext):
     uid = message.from_user.id if message.from_user else None
     username = message.from_user.username if message.from_user else None
     if uid is not None:
+        get_user_filter(uid)
         profiles[uid] = {
             "gender": data.get("gender"),
             "name": data.get("name"),
@@ -464,11 +628,27 @@ async def cmd_find(message: types.Message):
     if viewer_id not in profiles:
         await message.answer("Сначала заполни свою анкету через /start.")
         return
+    get_user_filter(viewer_id)
     candidate_id = get_next_candidate_id(viewer_id)
     if candidate_id is None:
-        await message.answer("👀 Твой типаж: пока новых анкет нет.")
+        await send_no_candidates_prompt(message, viewer_id)
         return
     await send_candidate(message, viewer_id, candidate_id)
+
+
+@dp.callback_query(F.data == "find_replay_seen")
+async def on_find_replay_seen(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    uid = callback.from_user.id
+    seen_profiles[uid] = set()
+    candidate_id = get_next_candidate_id(uid)
+    if candidate_id is None:
+        await send_no_candidates_prompt(callback.message, uid)
+    else:
+        await send_candidate(callback.message, uid, candidate_id)
+    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith(("swipe_like:", "swipe_skip:")))
@@ -502,7 +682,7 @@ async def on_swipe(callback: types.CallbackQuery):
 
     next_id = get_next_candidate_id(viewer_id)
     if next_id is None:
-        await callback.message.answer("Анкеты на сегодня закончились.")
+        await send_no_candidates_prompt(callback.message, viewer_id)
     else:
         await send_candidate(callback.message, viewer_id, next_id)
 
@@ -786,6 +966,13 @@ async def on_contact_response(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@dp.message(Command("matches"))
+async def cmd_matches_alias(message: types.Message):
+    if not message.from_user:
+        return
+    await open_matches_section(message, message.from_user.id)
+
+
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
     await message.answer(
@@ -884,8 +1071,247 @@ async def on_title_select(callback: types.CallbackQuery):
 
 
 @dp.message(Command("settings"))
-async def cmd_settings(message: types.Message):
-    await message.answer("⚙️ Подкрутить")
+async def cmd_settings(message: types.Message, state: FSMContext):
+    await state.clear()
+    if not message.from_user:
+        return
+    await message.answer(
+        format_filters_summary(message.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "flt_open_menu")
+async def on_flt_open_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user and callback.message:
+        await callback.message.answer(
+            format_filters_summary(callback.from_user.id),
+            reply_markup=build_settings_keyboard(),
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_gender_menu")
+async def on_flt_gender_menu(callback: types.CallbackQuery):
+    if callback.message:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🖤 Только парней", callback_data="set_g_m")],
+                [
+                    InlineKeyboardButton(
+                        text="🥀 Только девушек", callback_data="set_g_f"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🖤 Всех подряд", callback_data="set_g_all"
+                    )
+                ],
+            ]
+        )
+        await callback.message.answer(
+            "💋 Кого будем искать?", reply_markup=keyboard
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.in_({"set_g_m", "set_g_f", "set_g_all"}))
+async def on_set_gender_pref(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    f = get_user_filter(callback.from_user.id)
+    mapping = {"set_g_m": "m", "set_g_f": "f", "set_g_all": "all"}
+    f["gender_pref"] = mapping[callback.data]
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_age_menu")
+async def on_flt_age_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(FilterForm.waiting_age_range)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="18 — 25 лет", callback_data="set_age:18:25"),
+                InlineKeyboardButton(text="18 — 30 лет", callback_data="set_age:18:30"),
+            ],
+            [
+                InlineKeyboardButton(text="21 — 35 лет", callback_data="set_age:21:35"),
+                InlineKeyboardButton(text="18 — 99 лет", callback_data="set_age:18:99"),
+            ],
+        ]
+    )
+    await callback.message.answer(
+        "🎂 Выбери диапазон (18+) или напиши свой текстом, например: 18-24",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_age:"))
+async def on_set_age_preset(callback: types.CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    await state.clear()
+    _, min_s, max_s = callback.data.split(":", 2)
+    f = get_user_filter(callback.from_user.id)
+    f["age_min"] = max(18, int(min_s))
+    f["age_max"] = max(f["age_min"], min(99, int(max_s)))
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.message(FilterForm.waiting_age_range)
+async def on_custom_age_range(message: types.Message, state: FSMContext):
+    if not message.from_user:
+        return
+    raw = (message.text or "").replace("—", "-").replace("–", "-").strip()
+    parts = [p.strip() for p in raw.split("-")]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        await message.answer("Напиши диапазон от 18, например: 18-25.")
+        return
+    age_min = int(parts[0])
+    age_max = int(parts[1])
+    if age_min < 18 or age_max > 99 or age_min > age_max:
+        await message.answer("Возраст должен быть от 18 до 99, а начало не больше конца.")
+        return
+    await state.clear()
+    f = get_user_filter(message.from_user.id)
+    f["age_min"] = age_min
+    f["age_max"] = age_max
+    await message.answer(
+        format_filters_summary(message.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "flt_geo_menu")
+async def on_flt_geo_menu(callback: types.CallbackQuery):
+    if callback.message:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📍 Любой город", callback_data="set_city:any"
+                    ),
+                    InlineKeyboardButton(
+                        text="📍 Только мой город", callback_data="set_city:my"
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🌍 Дистанция: Без ограничений",
+                        callback_data="set_dist:any",
+                    ),
+                    InlineKeyboardButton(
+                        text="🌍 Дистанция: Поблизости", callback_data="set_dist:near"
+                    ),
+                ],
+            ]
+        )
+        await callback.message.answer(
+            "📍 Выбери город и дистанцию:", reply_markup=keyboard
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_city:"))
+async def on_set_city(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    mode = callback.data.split(":", 1)[1]
+    f = get_user_filter(callback.from_user.id)
+    f["city_mode"] = "my" if mode == "my" else "any"
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_dist:"))
+async def on_set_dist(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    dist = callback.data.split(":", 1)[1]
+    f = get_user_filter(callback.from_user.id)
+    f["distance"] = "near" if dist == "near" else "any"
+    await callback.message.answer(
+        format_filters_summary(callback.from_user.id),
+        reply_markup=build_settings_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_expand_age")
+async def on_flt_expand_age(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    f = get_user_filter(callback.from_user.id)
+    f["age_min"] = 18
+    f["age_max"] = min(99, max(f["age_max"] + 5, 30))
+    await callback.message.answer(
+        f"🎂 Диапазон расширен до {f['age_min']}–{f['age_max']} лет."
+    )
+    candidate_id = get_next_candidate_id(callback.from_user.id)
+    if candidate_id is None:
+        await send_no_candidates_prompt(callback.message, callback.from_user.id)
+    else:
+        await send_candidate(callback.message, callback.from_user.id, candidate_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_any_city")
+async def on_flt_any_city(callback: types.CallbackQuery):
+    if not callback.from_user or not callback.message:
+        await callback.answer()
+        return
+    f = get_user_filter(callback.from_user.id)
+    f["city_mode"] = "any"
+    await callback.message.answer("📍 Теперь поиск по любому городу.")
+    candidate_id = get_next_candidate_id(callback.from_user.id)
+    if candidate_id is None:
+        await send_no_candidates_prompt(callback.message, callback.from_user.id)
+    else:
+        await send_candidate(callback.message, callback.from_user.id, candidate_id)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_reset")
+async def on_flt_reset(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user and callback.message:
+        user_filters[callback.from_user.id] = get_default_filters()
+        await callback.message.answer(
+            format_filters_summary(callback.from_user.id),
+            reply_markup=build_settings_keyboard(),
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "flt_save")
+async def on_flt_save(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user and callback.message:
+        await callback.message.answer(
+            "🖤 Изменения сохранены. Запускай /find — дальше подбираю по ним."
+        )
+    await callback.answer()
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
