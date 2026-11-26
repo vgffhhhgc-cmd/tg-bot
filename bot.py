@@ -19,6 +19,7 @@ class RegForm(StatesGroup):
     waiting_age = State()
     waiting_city = State()
     waiting_looking_for = State()
+    waiting_bio = State()
 
 
 def keepalive() -> None:
@@ -128,17 +129,29 @@ async def on_looking_for(callback: types.CallbackQuery, state: FSMContext):
     }
     looking_for = seek_map[callback.data]
     await state.update_data(looking_for=looking_for)
+    await state.set_state(RegForm.waiting_bio)
+    await callback.message.answer("Напиши пару слов о себе:")
+    await callback.answer()
+
+
+@dp.message(RegForm.waiting_bio)
+async def on_bio(message: types.Message, state: FSMContext):
+    bio = (message.text or "").strip()
+    if not bio:
+        await message.answer("Напиши описание текстом.")
+        return
+    await state.update_data(bio=bio)
     data = await state.get_data()
     await state.clear()
-    await callback.message.answer(
+    await message.answer(
         f"Записала:\n"
         f"Пол: {data.get('gender')}\n"
         f"Имя: {data.get('name')}\n"
         f"Возраст: {data.get('age')}\n"
         f"Город: {data.get('city')}\n"
-        f"Ищет: {data.get('looking_for')}"
+        f"Ищет: {data.get('looking_for')}\n"
+        f"О себе: {data.get('bio')}"
     )
-    await callback.answer()
 
 
 @dp.message(Command("me"))
