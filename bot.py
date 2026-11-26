@@ -20,6 +20,7 @@ CONTACT_REQUEST_TTL = 24 * 60 * 60
 GENERAL_CHAT_URL = "https://t.me/+0zfQwL8xH9diY2My"
 EXTRA_LIKES_PACK_SIZE = 10
 BOOST_DURATION_SEC = 24 * 60 * 60
+VIP_DURATION_SEC = 30 * 24 * 60 * 60
 # Укажи сюда свой Telegram ID (числом) для доступа в /mod
 ADMIN_IDS: set[int] = set()
 
@@ -32,6 +33,7 @@ skipped_history: dict[int, list[int]] = {}
 undo_credits: dict[int, int] = {}
 extra_likes: dict[int, int] = {}
 boosted_until: dict[int, float] = {}
+vip_until: dict[int, float] = {}
 likes_given: dict[int, set[int]] = {}
 matches_by_user: dict[int, set[int]] = {}
 match_dates: dict[tuple[int, int], str] = {}
@@ -91,6 +93,14 @@ def is_user_boosted(user_id: int) -> bool:
     if until > time.time():
         return True
     boosted_until.pop(user_id, None)
+    return False
+
+
+def is_user_vip(user_id: int) -> bool:
+    until = vip_until.get(user_id, 0)
+    if until > time.time():
+        return True
+    vip_until.pop(user_id, None)
     return False
 
 
@@ -400,16 +410,23 @@ def format_profile_caption(
     user_id: int | None = None,
     match_date: str | None = None,
 ) -> str:
+    vip_badge = " 🖤 VIP" if (user_id is not None and is_user_vip(user_id)) else ""
     title_line = ""
     if user_id is not None and user_titles.get(user_id):
         title_line = f"\nТитул: {user_titles[user_id]}"
+    vip_line = ""
+    if user_id is not None and is_user_vip(user_id):
+        vip_until_str = datetime.fromtimestamp(vip_until[user_id]).strftime(
+            "%d.%m.%Y"
+        )
+        vip_line = f"\nVIP активен до: {vip_until_str}"
     date_line = f"\nДата мэтча: {match_date}" if match_date else ""
     return (
-        f"{header}:\n"
+        f"{header}{vip_badge}:\n"
         f"Имя: {profile.get('name')}, {profile.get('age')}\n"
         f"Город: {profile.get('city')}\n"
         f"Пол: {profile.get('gender')} | Ищет/интересы: {profile.get('looking_for')}\n"
-        f"О себе: {profile.get('bio')}{title_line}{date_line}"
+        f"О себе: {profile.get('bio')}{title_line}{vip_line}{date_line}"
     )
 
 
@@ -1640,13 +1657,23 @@ async def on_successful_payment(message: types.Message):
         await message.answer(
             "🚀 Оплата прошла! Твоя анкета поднята в топ выдачи на 24 часа."
         )
+    elif payment.invoice_payload == "buy_vip_30d":
+        vip_until[uid] = time.time() + VIP_DURATION_SEC
+        await message.answer(
+            "🖤 Оплата прошла! VIP активирован на 30 дней."
+        )
 
 
 @dp.callback_query(F.data == "don_vip")
 async def on_don_vip(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer(
-            "🖤 Купить VIP — расширенные возможности без гарантии взаимности."
+        await callback.message.answer_invoice(
+            title="VIP на 30 дней",
+            description="Статус VIP в анкете и расширенные привилегии на 30 дней.",
+            payload="buy_vip_30d",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="VIP на 30 дней", amount=120)],
         )
     await callback.answer()
 
