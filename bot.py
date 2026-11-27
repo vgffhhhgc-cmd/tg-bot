@@ -1024,11 +1024,11 @@ async def send_match_card(message: types.Message, viewer_id: int, target_id: int
 
 async def open_matches_section(message: types.Message, user_id: int) -> None:
     intro = (
-        "💔 ТВОИ ЛЮБОВНЫЕ ПРОЁБЫ:\n"
-        "🫂 Люди, которым ты зачем-то понравился. Соболезную. 🖤\n\n"
-        "😏 Ну что, полез смотреть, кому ты успел вскружить голову? 😝\n"
-        "💞 Вот твои взаимки — коллекция людей, которые добровольно согласились\n    связать свою судьбу с твоей сомнительной персоной. ✝️\n"
-        "🎯 Выбирай, кого сегодня будешь сводить с ума."
+        "💔 ТВОИ ЛЮБОВНЫЕ ПРОЁБЫ: 💔\n"
+        "Люди, которым ты зачем-то понравился. Соболезную. 🖤\n"
+        "Ну что, полез смотреть, кому ты успел вскружить голову?\n"
+        "Вот твои взаимки — коллекция людей, которые добровольно согласились связать свою судьбу с твоей сомнительной персоной.\n"
+        "Выбирай, кого сегодня будешь сводить с ума. 🥴"
     )
     matched_ids = [
         mid
@@ -3488,7 +3488,7 @@ async def on_don_support(callback: types.CallbackQuery):
                     )
                 ],
                 [InlineKeyboardButton(text="😈 Грешник 😈", callback_data="title_sinner")],
-                [InlineKeyboardButton(text="👑Покровитель тьмы 👑", callback_data="title_patron")],
+                [InlineKeyboardButton(text="👑 Покровитель тьмы 👑", callback_data="title_patron")],
                 [
                     InlineKeyboardButton(
                         text="💸 Спонсор чужой любви 💸", callback_data="title_sponsor"
@@ -3498,8 +3498,7 @@ async def on_don_support(callback: types.CallbackQuery):
             ]
         )
         await callback.message.answer(
-            "🫶 Поддержать проект просто потому что можешь, чёртов меценат. "
-            "⭐ Можно закинуть звёзд или выбрать титул по желанию:",
+            "Поддержать проект просто потому что можешь, чёртов меценат! 😼⭐ Можно закинуть звёзд или выбрать титул по желанию",
             reply_markup=keyboard,
         )
     await callback.answer()
