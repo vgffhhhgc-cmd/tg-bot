@@ -33,7 +33,7 @@ KRK_SITE_TITLE = "slon6.at"
 KRK_SITE_URL = "https://slon6.at"
 NEARBY_RADIUS_KM = 15.0
 STATE_FILE_PATH = os.environ.get("STATE_FILE_PATH", "bot_state.json")
-
+STORAGE_CHANNEL_ID = os.environ.get("STORAGE_CHANNEL_ID", "").strip()
 # Твой Telegram ID для доступа в /mod и админку магазина «💸 Слив»
 ADMIN_IDS: set[int] = {5220461940}
 
