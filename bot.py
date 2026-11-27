@@ -34,7 +34,7 @@ KRK_SITE_URL = "https://slon6.at"
 NEARBY_RADIUS_KM = 15.0
 STATE_FILE_PATH = os.environ.get("STATE_FILE_PATH", "bot_state.json")
 
-# Укажи сюда свой Telegram ID (числом) для доступа в /mod и админку магазина
+# Твой Telegram ID для доступа в /mod и админку магазина «💸 Слив»
 ADMIN_IDS: set[int] = {5220461940}
 
 SHOP_REQUISITES = "2201 9604 2731 7498"
@@ -91,19 +91,19 @@ shop_orders: dict[int, dict] = {}
 shop_order_counter: int = 5000
 
 DONATE_TITLES = {
-    "title_sinner": "Грешник",
-    "title_patron": "Покровитель тьмы",
-    "title_sponsor": "Спонсор чужой любви",
+    "title_sinner": "😈 Грешник",
+    "title_patron": "🖤 Покровитель тьмы",
+    "title_sponsor": "💸 Спонсор чужой любви",
 }
 
 REPORT_REASONS = {
-    "rep_insult": ("Оскорбления и травля", False),
-    "rep_spam": ("Спам и навязчивые сообщения", False),
-    "rep_fake": ("Фейковая анкета / выдаёт себя за другого", False),
-    "rep_nsfw": ("Запрещённый сексуальный контент", True),
-    "rep_threats": ("! Угрозы и преследование", True),
-    "rep_minor": ("Несовершеннолетний в анкете / возрастное несоответствие", True),
-    "rep_other": ("? Другая причина", False),
+    "rep_insult": ("🤬 Оскорбления и травля", False),
+    "rep_spam": ("📢 Спам и навязчивые сообщения", False),
+    "rep_fake": ("🎭 Фейковая анкета / выдаёт себя за другого", False),
+    "rep_nsfw": ("🔞 Запрещённый сексуальный контент", True),
+    "rep_threats": ("🚨 Угрозы и преследование", True),
+    "rep_minor": ("🔞 Несовершеннолетний в анкете / возрастное несоответствие", True),
+    "rep_other": ("❓ Другая причина", False),
 }
 
 
@@ -327,15 +327,15 @@ def format_distance_line(viewer_id: int, target_id: int) -> str:
         return ""
     if dist_km < 1.0:
         meters = max(50, int(round(dist_km * 1000 / 50) * 50))
-        return f"\nРасстояние: ~{meters} м"
-    return f"\nРасстояние: ~{round(dist_km, 1)} км"
+        return f"\n📍 Расстояние: ~{meters} м"
+    return f"\n📍 Расстояние: ~{round(dist_km, 1)} км"
 
 
 def build_location_request_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Отправить мою геолокацию", request_location=True)],
-            [KeyboardButton(text="Отмена")],
+            [KeyboardButton(text="📍 Отправить мою геолокацию", request_location=True)],
+            [KeyboardButton(text="❌ Отмена")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
@@ -386,11 +386,11 @@ def get_restriction_status(user_id: int) -> str | None:
     if not info:
         return None
     if info.get("banned"):
-        return "Аккаунт заблокирован модерацией."
+        return "🚫 Аккаунт заблокирован модерацией."
     until = info.get("until", 0)
     if until > time.time():
         dt_str = datetime.fromtimestamp(until).strftime("%d.%m.%Y %H:%M")
-        return f"Аккаунт временно ограничен до {dt_str}."
+        return f"⏳ Аккаунт временно ограничен до {dt_str}."
     user_restrictions.pop(user_id, None)
     save_state()
     return None
@@ -421,15 +421,15 @@ def format_filters_summary(user_id: int) -> str:
         "any": "Без ограничений",
         "near": f"Поблизости (до {int(NEARBY_RADIUS_KM)} км)",
     }
-    has_geo = "указана" if user_id in user_locations else "не указана"
+    has_geo = "указана ✅" if user_id in user_locations else "не указана"
     return (
-        "* ТВОИ НАСТРОЙКИ:\n"
+        "⚙️ ТВОИ НАСТРОЙКИ:\n"
         "Давай подберём тебе кого-нибудь, пока ты окончательно не ебанулся от одиночества.\n\n"
-        f"Кого ищем: {gender_map.get(f['gender_pref'], 'Всех подряд')}\n"
-        f"Возрастной диапазон: {f['age_min']} - {f['age_max']} лет\n"
-        f"Дистанция: {dist_map.get(f['distance'], 'Без ограничений')}\n"
-        f"Город: {city_map.get(f['city_mode'], 'Любой город')}\n"
-        f"Геолокация: {has_geo}"
+        f"• Кого ищем: {gender_map.get(f['gender_pref'], 'Всех подряд')}\n"
+        f"• Возрастной диапазон: {f['age_min']} - {f['age_max']} лет\n"
+        f"• Дистанция: {dist_map.get(f['distance'], 'Без ограничений')}\n"
+        f"• Город: {city_map.get(f['city_mode'], 'Любой город')}\n"
+        f"• Геолокация: {has_geo}"
     )
 
 
@@ -437,14 +437,28 @@ def build_settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Кого ищем?", callback_data="flt_gender_menu"),
-                InlineKeyboardButton(text="Возрастной диапазон", callback_data="flt_age_menu"),
+                InlineKeyboardButton(text="👀 Кого ищем?", callback_data="flt_gender_menu"),
+                InlineKeyboardButton(
+                    text="🎂 Возрастной диапазон", callback_data="flt_age_menu"
+                ),
             ],
-            [InlineKeyboardButton(text="Город и расстояние", callback_data="flt_geo_menu")],
-            [InlineKeyboardButton(text="ОБЩИЙ ЧАТ", callback_data="open_general_chat")],
             [
-                InlineKeyboardButton(text="Сбросить настройки", callback_data="flt_reset"),
-                InlineKeyboardButton(text="Сохранить изменения", callback_data="flt_save"),
+                InlineKeyboardButton(
+                    text="📍 Город и расстояние", callback_data="flt_geo_menu"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 ОБЩИЙ ЧАТ", callback_data="open_general_chat"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Сбросить настройки", callback_data="flt_reset"
+                ),
+                InlineKeyboardButton(
+                    text="💾 Сохранить изменения", callback_data="flt_save"
+                ),
             ],
         ]
     )
@@ -583,10 +597,10 @@ def build_safety_keyboard(target_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Пожаловаться", callback_data=f"rep_start:{target_id}"
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{target_id}"
                 ),
                 InlineKeyboardButton(
-                    text="Заблокировать", callback_data=f"blk_direct:{target_id}"
+                    text="🚫 Заблокировать", callback_data=f"blk_direct:{target_id}"
                 ),
             ]
         ]
@@ -598,24 +612,28 @@ def build_anon_chat_keyboard(partner_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Обменяться контактами", callback_data="contact_req_send"
+                    text="💌 Обменяться контактами", callback_data="contact_req_send"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Отозвать запрос контактов",
+                    text="↩️ Отозвать запрос контактов",
                     callback_data="contact_req_cancel",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Пожаловаться", callback_data=f"rep_start:{partner_id}"
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{partner_id}"
                 ),
                 InlineKeyboardButton(
-                    text="Заблокировать", callback_data=f"blk_direct:{partner_id}"
+                    text="🚫 Заблокировать", callback_data=f"blk_direct:{partner_id}"
                 ),
             ],
-            [InlineKeyboardButton(text="К взаимкам", callback_data="matches_back")],
+            [
+                InlineKeyboardButton(
+                    text="💘 К взаимкам", callback_data="matches_back"
+                )
+            ],
         ]
     )
 
@@ -625,64 +643,68 @@ def build_match_card_keyboard(target_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Написать этому чуду",
+                    text="💬 Написать этому чуду",
                     callback_data=f"match_chat:{target_id}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Посмотреть анкету",
+                    text="🪪 Посмотреть анкету",
                     callback_data=f"match_view:{target_id}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Удалить из взаимок",
+                    text="🗑 Удалить из взаимок",
                     callback_data=f"match_del_ask:{target_id}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Пожаловаться", callback_data=f"rep_start:{target_id}"
+                    text="🚨 Пожаловаться", callback_data=f"rep_start:{target_id}"
                 ),
                 InlineKeyboardButton(
-                    text="Заблокировать", callback_data=f"blk_direct:{target_id}"
+                    text="🚫 Заблокировать", callback_data=f"blk_direct:{target_id}"
                 ),
             ],
-            [InlineKeyboardButton(text="Вернуться назад", callback_data="matches_back")],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Вернуться назад", callback_data="matches_back"
+                )
+            ],
         ]
     )
 
 
 def format_profile_caption(
     profile: dict,
-    header: str = "Твой козырь",
+    header: str = "🃏 Твой козырь",
     user_id: int | None = None,
     viewer_id: int | None = None,
     match_date: str | None = None,
     include_bonuses: bool = False,
 ) -> str:
-    vip_badge = " [VIP]" if (user_id is not None and is_user_vip(user_id)) else ""
+    vip_badge = " 👑 [VIP]" if (user_id is not None and is_user_vip(user_id)) else ""
     title_line = ""
     if user_id is not None and user_titles.get(user_id):
-        title_line = f"\nТитул: {user_titles[user_id]}"
+        title_line = f"\n🏷 Титул: {user_titles[user_id]}"
     vip_line = ""
     if user_id is not None and is_user_vip(user_id):
         vip_until_str = datetime.fromtimestamp(vip_until[user_id]).strftime("%d.%m.%Y")
-        vip_line = f"\nVIP активен до: {vip_until_str}"
+        vip_line = f"\n👑 VIP активен до: {vip_until_str}"
     dist_line = ""
     if viewer_id is not None and user_id is not None and viewer_id != user_id:
         dist_line = format_distance_line(viewer_id, user_id)
-    date_line = f"\nДата мэтча: {match_date}" if match_date else ""
+    date_line = f"\n🗓 Дата мэтча: {match_date}" if match_date else ""
     bonuses_line = ""
     if include_bonuses and user_id is not None:
         bonuses_line = (
-            f"\nБонусы: доп. лайков — {extra_likes.get(user_id, 0)}, "
+            f"\n🎁 Бонусы: доп. лайков — {extra_likes.get(user_id, 0)}, "
             f"откатов дизлайка — {undo_credits.get(user_id, 0)}"
         )
         donated_total = supporter_donations.get(user_id, 0)
         if donated_total > 0:
-            bonuses_line += f"\nПоддержал проект на: {donated_total} звёзд"
+            bonuses_line += f"\n⭐️ Поддержал проект на: {donated_total} звёзд"
     return (
         f"{header}{vip_badge}:\n"
         f"Имя: {profile.get('name')}, {profile.get('age')}\n"
@@ -719,25 +741,25 @@ async def send_incoming_likes_list(message: types.Message, user_id: int) -> None
             "либо никто ещё не успел зацепить."
         )
         return
-    await message.answer(f"Тебя лайкнули ({len(likers)}):")
+    await message.answer(f"💘 Тебя лайкнули ({len(likers)}):")
     for sender_id in likers[:10]:
         prof = profiles[sender_id]
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Лайкнуть в ответ",
+                        text="❤️ Лайкнуть в ответ",
                         callback_data=f"peek_like_back:{sender_id}",
                     ),
                     InlineKeyboardButton(
-                        text="Анкета",
+                        text="🪪 Анкета",
                         callback_data=f"peek_view:{sender_id}",
                     ),
                 ]
             ]
         )
         await message.answer(
-            f"{prof.get('name')}, {prof.get('age')} - {prof.get('city')}\n"
+            f"✨ {prof.get('name')}, {prof.get('age')} — {prof.get('city')}\n"
             f"О себе: {prof.get('bio')}",
             reply_markup=kb,
         )
@@ -781,39 +803,39 @@ async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> N
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Расширить возраст", callback_data="flt_expand_age"
+                    text="🎂 Расширить возраст", callback_data="flt_expand_age"
                 ),
                 InlineKeyboardButton(
-                    text="Убрать фильтр города", callback_data="flt_any_city"
+                    text="🌍 Убрать фильтр города", callback_data="flt_any_city"
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="Смотреть заново", callback_data="find_replay_seen"
+                    text="🔁 Смотреть заново", callback_data="find_replay_seen"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Открыть настройки", callback_data="flt_open_menu"
+                    text="⚙️ Открыть настройки", callback_data="flt_open_menu"
                 )
             ],
         ]
     )
     if vf.get("distance") == "near" and viewer_id not in user_locations:
         text = (
-            f"Включён режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)», "
+            f"📍 Включён режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)», "
             "но ты ещё не скинула свою геолокацию.\n"
             "Зайди в /settings -> «Город и расстояние» и отправь локацию."
         )
     elif has_any_matching_candidate(viewer_id):
         text = (
-            "Подходящие анкеты по текущим фильтрам закончились.\n"
+            "📭 Подходящие анкеты по текущим фильтрам закончились.\n"
             "Настройки не сбрасываю без твоего согласия — можешь начать просмотр "
             "заново или подкрутить фильтры."
         )
     else:
         text = (
-            "Подходящих под взаимные фильтры анкет сейчас нет.\n"
+            "📭 Подходящих под взаимные фильтры анкет сейчас нет.\n"
             "Настройки не меняю сам — можешь расширить возраст, открыть любой город "
             "или заглянуть в /settings."
         )
@@ -822,7 +844,7 @@ async def send_no_candidates_prompt(message: types.Message, viewer_id: int) -> N
 
 async def send_candidate(message: types.Message, viewer_id: int, target_id: int) -> None:
     candidate = profiles[target_id]
-    header = "В топе | Твой типаж" if is_user_boosted(target_id) else "Твой типаж"
+    header = "🔥 В топе | Твой типаж" if is_user_boosted(target_id) else "✨ Твой типаж"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -831,7 +853,7 @@ async def send_candidate(message: types.Message, viewer_id: int, target_id: int)
             ],
             [
                 InlineKeyboardButton(
-                    text="Жалоба / блок", callback_data=f"safety_menu:{target_id}"
+                    text="🚨 Жалоба / блок", callback_data=f"safety_menu:{target_id}"
                 )
             ],
         ]
@@ -852,7 +874,7 @@ async def send_match_card(message: types.Message, viewer_id: int, target_id: int
         return
     caption = format_profile_caption(
         candidate,
-        header="Открыть переписку",
+        header="💘 Взаимка",
         user_id=target_id,
         viewer_id=viewer_id,
         match_date=get_match_date(viewer_id, target_id),
@@ -866,7 +888,7 @@ async def send_match_card(message: types.Message, viewer_id: int, target_id: int
 
 async def open_matches_section(message: types.Message, user_id: int) -> None:
     intro = (
-        "ТВОИ ЛЮБОВНЫЕ ПРОЁБЫ:\n"
+        "💔 ТВОИ ЛЮБОВНЫЕ ПРОЁБЫ:\n"
         "Люди, которым ты зачем-то понравился. Соболезную.\n\n"
         "Ну что, полез смотреть, кому ты успел вскружить голову?\n"
         "Вот твои взаимки — коллекция людей, которые добровольно согласились "
@@ -895,7 +917,7 @@ async def enter_anon_chat(message: types.Message, user_id: int, partner_id: int)
     save_state()
     partner_name = profiles.get(partner_id, {}).get("name", "собеседником")
     text = (
-        f"Комната с {partner_name}:\n\n"
+        f"🕯 Комната с {partner_name}:\n\n"
         "Добро пожаловать в вашу маленькую комнату греха.\n"
         "Здесь вы можете переписываться, флиртовать и нести друг другу романтическую хуйню.\n"
         "Ваши личные аккаунты останутся скрытыми. Захотите раскрыть друг другу личности — "
@@ -912,18 +934,28 @@ def build_donate_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💸 Слив", callback_data="sliv_open")],
             [
                 InlineKeyboardButton(
-                    text="Подглядеть лайки", callback_data="don_peek_likes"
+                    text="👀 Подглядеть лайки", callback_data="don_peek_likes"
                 )
             ],
-            [InlineKeyboardButton(text="Поднять анкету", callback_data="don_boost")],
             [
-                InlineKeyboardButton(text="Доп. лайки", callback_data="don_extra_likes"),
                 InlineKeyboardButton(
-                    text="Отменить дизлайк", callback_data="don_undo_skip"
+                    text="🚀 Поднять анкету", callback_data="don_boost"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❤️ Доп. лайки", callback_data="don_extra_likes"
+                ),
+                InlineKeyboardButton(
+                    text="↩️ Отменить дизлайк", callback_data="don_undo_skip"
                 ),
             ],
-            [InlineKeyboardButton(text="Купить VIP", callback_data="don_vip")],
-            [InlineKeyboardButton(text="Поддержать проект", callback_data="don_support")],
+            [InlineKeyboardButton(text="👑 Купить VIP", callback_data="don_vip")],
+            [
+                InlineKeyboardButton(
+                    text="⭐️ Поддержать проект", callback_data="don_support"
+                )
+            ],
         ]
     )
 
@@ -940,11 +972,11 @@ def get_visible_catalog_products() -> list[dict]:
 
 
 def format_product_card_caption(product: dict) -> str:
-    avail_text = "В наличии" if product.get("in_stock", True) else "Нет в наличии"
+    avail_text = "✅ В наличии" if product.get("in_stock", True) else "❌ Нет в наличии"
     return (
         f"📦 {product.get('title')}\n"
-        f"Цена: {product.get('price')} ₽\n"
-        f"Статус наличия: {avail_text}\n\n"
+        f"💰 Цена: {product.get('price')} ₽\n"
+        f"📌 Наличие: {avail_text}\n\n"
         f"{product.get('description')}"
     )
 
@@ -952,19 +984,19 @@ def format_product_card_caption(product: dict) -> str:
 def format_order_summary(order: dict) -> str:
     username_str = f"@{order['username']}" if order.get("username") else "не указан"
     pdf_info = (
-        f"{order.get('payment_file_name')} (прикреплён)"
+        f"📄 {order.get('payment_file_name')} (прикреплён)"
         if order.get("payment_file_id")
         else "не прикреплён"
     )
     return (
         f"🧾 Заказ #{order['id']}\n"
-        f"Товар: {order['product_title']}\n"
-        f"Цена при оформлении: {order['price']} ₽\n"
-        f"Покупатель: ID {order['buyer_id']} ({username_str})\n"
-        f"Город: {order['city']}\n"
-        f"Дата создания: {order['created_at']}\n"
-        f"Статус: {order['status']}\n"
-        f"PDF подтверждения оплаты: {pdf_info}"
+        f"📦 Товар: {order['product_title']}\n"
+        f"💰 Цена на момент оформления: {order['price']} ₽\n"
+        f"👤 Покупатель: ID {order['buyer_id']} ({username_str})\n"
+        f"🏙 Город: {order['city']}\n"
+        f"🗓 Дата создания: {order['created_at']}\n"
+        f"📌 Статус: {order['status']}\n"
+        f"📎 Чек PDF: {pdf_info}"
     )
 
 
@@ -988,7 +1020,9 @@ def build_shop_catalog_keyboard() -> InlineKeyboardMarkup:
             else f"sliv_oos:{p['id']}"
         )
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=cb_data)])
-    rows.append([InlineKeyboardButton(text="Назад в /donate", callback_data="sliv_back_donate")])
+    rows.append(
+        [InlineKeyboardButton(text="⬅️ Назад в /donate", callback_data="sliv_back_donate")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1001,7 +1035,7 @@ async def send_shop_catalog(message: types.Message) -> None:
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="Назад в /donate", callback_data="sliv_back_donate"
+                            text="⬅️ Назад в /donate", callback_data="sliv_back_donate"
                         )
                     ]
                 ]
@@ -1017,9 +1051,17 @@ async def send_shop_catalog(message: types.Message) -> None:
 def build_shop_admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Добавить товар", callback_data="shop_adm_add")],
-            [InlineKeyboardButton(text="Мои товары", callback_data="shop_adm_products")],
-            [InlineKeyboardButton(text="Заказы", callback_data="shop_adm_orders")],
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить товар", callback_data="shop_adm_add"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📦 Мои товары", callback_data="shop_adm_products"
+                )
+            ],
+            [InlineKeyboardButton(text="🧾 Заказы", callback_data="shop_adm_orders")],
             [
                 InlineKeyboardButton(
                     text="📊 Статистика магазина", callback_data="shop_adm_stats"
@@ -1043,10 +1085,10 @@ def build_product_preview_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Да, подтвердить", callback_data="shop_adm_confirm_add"
+                    text="✅ Да, подтвердить", callback_data="shop_adm_confirm_add"
                 ),
                 InlineKeyboardButton(
-                    text="Назад", callback_data="shop_adm_cancel_add"
+                    text="⬅️ Назад", callback_data="shop_adm_cancel_add"
                 ),
             ]
         ]
@@ -1058,18 +1100,18 @@ def build_admin_product_actions_keyboard(product: dict) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
-                text="Редактировать название", callback_data=f"shop_ed_title:{pid}"
+                text="✏️ Редактировать название", callback_data=f"shop_ed_title:{pid}"
             ),
             InlineKeyboardButton(
-                text="Менять цену", callback_data=f"shop_ed_price:{pid}"
+                text="💰 Менять цену", callback_data=f"shop_ed_price:{pid}"
             ),
         ],
         [
             InlineKeyboardButton(
-                text="Менять описание", callback_data=f"shop_ed_desc:{pid}"
+                text="📝 Менять описание", callback_data=f"shop_ed_desc:{pid}"
             ),
             InlineKeyboardButton(
-                text="Заменять фотографию", callback_data=f"shop_ed_photo:{pid}"
+                text="🖼 Заменять фотографию", callback_data=f"shop_ed_photo:{pid}"
             ),
         ],
     ]
@@ -1077,7 +1119,8 @@ def build_admin_product_actions_keyboard(product: dict) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Пометить как «Нет в наличии»", callback_data=f"shop_st_oos:{pid}"
+                    text="❌ Пометить как «Нет в наличии»",
+                    callback_data=f"shop_st_oos:{pid}",
                 )
             ]
         )
@@ -1085,7 +1128,8 @@ def build_admin_product_actions_keyboard(product: dict) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Сделать товар доступным", callback_data=f"shop_st_avail:{pid}"
+                    text="✅ Сделать товар доступным",
+                    callback_data=f"shop_st_avail:{pid}",
                 )
             ]
         )
@@ -1093,7 +1137,8 @@ def build_admin_product_actions_keyboard(product: dict) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Показать товар в каталоге", callback_data=f"shop_vis_show:{pid}"
+                    text="👁 Показать товар в каталоге",
+                    callback_data=f"shop_vis_show:{pid}",
                 )
             ]
         )
@@ -1101,19 +1146,23 @@ def build_admin_product_actions_keyboard(product: dict) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Скрывать товар", callback_data=f"shop_vis_hide:{pid}"
+                    text="🙈 Скрывать товар", callback_data=f"shop_vis_hide:{pid}"
                 )
             ]
         )
     rows.append(
         [
             InlineKeyboardButton(
-                text="Удалить товар", callback_data=f"shop_del_ask:{pid}"
+                text="🗑 Удалить товар", callback_data=f"shop_del_ask:{pid}"
             )
         ]
     )
     rows.append(
-        [InlineKeyboardButton(text="К списку товаров", callback_data="shop_adm_products")]
+        [
+            InlineKeyboardButton(
+                text="⬅️ К списку товаров", callback_data="shop_adm_products"
+            )
+        ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1122,8 +1171,8 @@ def build_confirm_keyboard(confirm_cb: str, back_cb: str) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Да, подтвердить", callback_data=confirm_cb),
-                InlineKeyboardButton(text="Назад", callback_data=back_cb),
+                InlineKeyboardButton(text="✅ Да, подтвердить", callback_data=confirm_cb),
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
             ]
         ]
     )
@@ -1148,7 +1197,7 @@ async def on_sliv_open(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     await state.clear()
-    await callback.message.answer("Последние копейки принёс?")
+    await callback.message.answer("💸 Последние копейки принёс?")
     await send_shop_catalog(callback.message)
     await callback.answer()
 
@@ -1172,7 +1221,7 @@ async def on_sliv_out_of_stock(callback: types.CallbackQuery):
     pid = int(raw_id) if raw_id.isdigit() else -1
     prod = shop_products.get(pid)
     title = prod["title"] if prod else "Товар"
-    await callback.answer(f"«{title}» сейчас нет в наличии.", show_alert=True)
+    await callback.answer(f"❌ «{title}» сейчас нет в наличии.", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("sliv_prod:"))
@@ -1196,16 +1245,16 @@ async def on_sliv_product_card(callback: types.CallbackQuery):
         await callback.answer()
         return
     if not prod.get("in_stock", True):
-        await callback.answer("Товара сейчас нет в наличии.", show_alert=True)
+        await callback.answer("❌ Товара сейчас нет в наличии.", show_alert=True)
         return
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Купить", callback_data=f"sliv_buy:{pid}"
+                    text="🛒 Купить", callback_data=f"sliv_buy:{pid}"
                 ),
                 InlineKeyboardButton(
-                    text="Назад", callback_data="sliv_back_catalog"
+                    text="⬅️ Назад", callback_data="sliv_back_catalog"
                 ),
             ]
         ]
@@ -1249,16 +1298,16 @@ async def on_sliv_buy_terms(callback: types.CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Продолжить", callback_data=f"sliv_terms_ok:{pid}"
+                    text="✅ Продолжить", callback_data=f"sliv_terms_ok:{pid}"
                 ),
                 InlineKeyboardButton(
-                    text="Отменить", callback_data=f"sliv_prod:{pid}"
+                    text="❌ Отменить", callback_data=f"sliv_prod:{pid}"
                 ),
             ]
         ]
     )
     await callback.message.answer(
-        f"Товар: {prod['title']} — {prod['price']} ₽\n\n{SHOP_ORDER_TERMS}",
+        f"📦 Товар: {prod['title']} — {prod['price']} ₽\n\n{SHOP_ORDER_TERMS}",
         reply_markup=kb,
     )
     await callback.answer()
@@ -1281,7 +1330,7 @@ async def on_sliv_terms_continue(callback: types.CallbackQuery, state: FSMContex
         return
     await state.set_state(ShopBuyerForm.waiting_city)
     await state.update_data(order_product_id=pid)
-    await callback.message.answer("Укажи свой город для оформления заказа:")
+    await callback.message.answer("🏙 Укажи свой город для оформления заказа:")
     await callback.answer()
 
 
@@ -1303,11 +1352,11 @@ async def on_shop_buyer_city(message: types.Message, state: FSMContext):
     await state.update_data(order_city=city)
     await state.set_state(ShopBuyerForm.waiting_payment_pdf)
     await message.answer(
-        f"Город сохранён: {city}\n\n"
+        f"🏙 Город сохранён: {city}\n\n"
         f"{SHOP_DELIVERY_NOTICE}\n\n"
         f"💳 Реквизиты для оплаты: {SHOP_REQUISITES}\n"
-        f"Сумма к оплате: {prod['price']} ₽\n\n"
-        "После оплаты прикрепи PDF-файл подтверждения оплаты сюда (документом):"
+        f"💰 Сумма к оплате: {prod['price']} ₽\n\n"
+        "📎 После оплаты прикрепи PDF-файл подтверждения оплаты сюда (документом):"
     )
 
 
@@ -1320,7 +1369,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
     file_name = doc.file_name or "receipt.pdf"
     mime_type = (doc.mime_type or "").lower()
     if not (mime_type == "application/pdf" or file_name.lower().endswith(".pdf")):
-        await message.answer("Нужно прикрепить именно PDF-файл подтверждения оплаты.")
+        await message.answer("📄 Нужно прикрепить именно PDF-файл подтверждения оплаты.")
         return
 
     data = await state.get_data()
@@ -1360,17 +1409,17 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Отменить заказ", callback_data=f"shop_user_cancel_ask:{order_id}"
+                    text="❌ Отменить заказ", callback_data=f"shop_user_cancel_ask:{order_id}"
                 )
             ]
         ]
     )
     await message.answer(
         f"✅ Заказ #{order_id} оформлен!\n"
-        f"Товар: {prod['title']} ({prod['price']} ₽)\n"
-        f"Город: {city}\n"
-        f"Статус: {SHOP_STATUS_PENDING}\n"
-        f"Файл оплаты получен: {file_name}",
+        f"📦 Товар: {prod['title']} ({prod['price']} ₽)\n"
+        f"🏙 Город: {city}\n"
+        f"📌 Статус: {SHOP_STATUS_PENDING}\n"
+        f"📎 Файл оплаты получен: {file_name}",
         reply_markup=buyer_kb,
     )
 
@@ -1384,7 +1433,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
             await bot.send_document(
                 chat_id=admin_id,
                 document=doc.file_id,
-                caption=f"PDF подтверждения оплаты по заказу #{order_id}",
+                caption=f"📄 PDF подтверждения оплаты по заказу #{order_id}",
             )
         except Exception:
             pass
@@ -1393,7 +1442,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
 @dp.message(ShopBuyerForm.waiting_payment_pdf)
 async def on_shop_payment_pdf_invalid(message: types.Message):
     await message.answer(
-        "Отправь, пожалуйста, оплату в виде PDF-файла (документом) для подтверждения."
+        "📄 Отправь, пожалуйста, оплату в виде PDF-файла (документом) для подтверждения."
     )
 
 
@@ -1415,8 +1464,8 @@ async def on_shop_user_cancel_ask(callback: types.CallbackQuery):
         await callback.answer("Этот заказ уже нельзя отменить.", show_alert=True)
         return
     await callback.message.answer(
-        f"Ты точно решил это сделать? Пальцы опять работают быстрее мозга?\n\n"
-        f"Отменить заказ #{oid}?",
+        "Ты точно решил это сделать? Пальцы опять работают быстрее мозга?\n\n"
+        f"❌ Отменить заказ #{oid}?",
         reply_markup=build_confirm_keyboard(
             confirm_cb=f"shop_user_cancel_yes:{oid}",
             back_cb=f"shop_user_cancel_no:{oid}",
@@ -1451,7 +1500,9 @@ async def on_shop_user_cancel_yes(callback: types.CallbackQuery):
         return
     order["status"] = SHOP_STATUS_CANCELED
     save_state()
-    await callback.message.answer(f"Заказ #{oid} отменён. Статус: {SHOP_STATUS_CANCELED}.")
+    await callback.message.answer(
+        f"Заказ #{oid} отменён. Статус: {SHOP_STATUS_CANCELED}."
+    )
     await notify_shop_admins(
         f"❌ Отмена заказа\n\n{format_order_summary(order)}"
     )
@@ -1468,7 +1519,7 @@ async def on_shop_adm_add(callback: types.CallbackQuery, state: FSMContext):
         return
     if callback.message:
         await state.set_state(ShopAdminForm.adding_title)
-        await callback.message.answer("Введи название товара:")
+        await callback.message.answer("✏️ Введи название товара:")
     await callback.answer()
 
 
@@ -1482,7 +1533,7 @@ async def on_shop_add_title(message: types.Message, state: FSMContext):
         return
     await state.update_data(new_title=title)
     await state.set_state(ShopAdminForm.adding_price)
-    await message.answer("Введи цену товара в рублях (числом, например: 500):")
+    await message.answer("💰 Введи цену товара в рублях (числом, например: 500):")
 
 
 @dp.message(ShopAdminForm.adding_price)
@@ -1501,7 +1552,7 @@ async def on_shop_add_price(message: types.Message, state: FSMContext):
     price_str = str(int(price_val)) if price_val.is_integer() else f"{price_val:.2f}"
     await state.update_data(new_price=price_str)
     await state.set_state(ShopAdminForm.adding_description)
-    await message.answer("Введи описание товара:")
+    await message.answer("📝 Введи описание товара:")
 
 
 @dp.message(ShopAdminForm.adding_description)
@@ -1514,7 +1565,7 @@ async def on_shop_add_description(message: types.Message, state: FSMContext):
         return
     await state.update_data(new_description=desc)
     await state.set_state(ShopAdminForm.adding_photo)
-    await message.answer("Отправь фотографию товара:")
+    await message.answer("🖼 Отправь фотографию товара:")
 
 
 @dp.message(ShopAdminForm.adding_photo, F.photo)
@@ -1528,22 +1579,22 @@ async def on_shop_add_photo(message: types.Message, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="В наличии", callback_data="shop_add_avail:yes"
+                    text="✅ В наличии", callback_data="shop_add_avail:yes"
                 ),
                 InlineKeyboardButton(
-                    text="Нет в наличии", callback_data="shop_add_avail:no"
+                    text="❌ Нет в наличии", callback_data="shop_add_avail:no"
                 ),
             ]
         ]
     )
-    await message.answer("Выбери доступность товара:", reply_markup=kb)
+    await message.answer("📌 Выбери доступность товара:", reply_markup=kb)
 
 
 @dp.message(ShopAdminForm.adding_photo)
 async def on_shop_add_photo_invalid(message: types.Message):
     if not message.from_user or not is_shop_admin(message.from_user.id):
         return
-    await message.answer("Нужно отправить именно фотографию товара.")
+    await message.answer("🖼 Нужно отправить именно фотографию товара.")
 
 
 @dp.callback_query(ShopAdminForm.adding_availability, F.data.startswith("shop_add_avail:"))
@@ -1563,7 +1614,7 @@ async def on_shop_add_availability(callback: types.CallbackQuery, state: FSMCont
         "description": data.get("new_description", ""),
         "in_stock": in_stock,
     }
-    await callback.message.answer("Предварительный просмотр карточки товара:")
+    await callback.message.answer("👀 Предварительный просмотр карточки товара:")
     await callback.message.answer_photo(
         photo=data["new_photo_id"],
         caption=format_product_card_caption(preview_product),
@@ -1599,7 +1650,9 @@ async def on_shop_adm_confirm_add(callback: types.CallbackQuery, state: FSMConte
         "hidden": False,
     }
     save_state()
-    await callback.message.answer(f"Товар «{shop_products[pid]['title']}» добавлен (ID #{pid}).")
+    await callback.message.answer(
+        f"✅ Товар «{shop_products[pid]['title']}» добавлен (ID #{pid})."
+    )
     await open_shop_admin_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
@@ -1630,14 +1683,14 @@ async def on_shop_adm_products(callback: types.CallbackQuery, state: FSMContext)
         return
     if not shop_products:
         await callback.message.answer(
-            "Список товаров пуст.", reply_markup=build_shop_admin_keyboard()
+            "📦 Список товаров пуст.", reply_markup=build_shop_admin_keyboard()
         )
         await callback.answer()
         return
     for pid in sorted(shop_products.keys()):
         prod = shop_products[pid]
-        vis_label = "Скрыт" if prod.get("hidden", False) else "Видим"
-        stock_label = "В наличии" if prod.get("in_stock", True) else "Нет в наличии"
+        vis_label = "🙈 Скрыт" if prod.get("hidden", False) else "👁 Видим"
+        stock_label = "✅ В наличии" if prod.get("in_stock", True) else "❌ Нет в наличии"
         caption = (
             f"{format_product_card_caption(prod)}\n"
             f"Видимость в каталоге: {vis_label} | ID: #{pid}"
@@ -1662,7 +1715,7 @@ async def on_shop_edit_title_ask(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(ShopAdminForm.editing_title)
     await state.update_data(edit_product_id=pid)
     if callback.message:
-        await callback.message.answer("Введи новое название товара:")
+        await callback.message.answer("✏️ Введи новое название товара:")
     await callback.answer()
 
 
@@ -1680,7 +1733,7 @@ async def on_shop_edit_title_save(message: types.Message, state: FSMContext):
     if isinstance(pid, int) and pid in shop_products:
         shop_products[pid]["title"] = title
         save_state()
-        await message.answer(f"Название обновлено: «{title}».")
+        await message.answer(f"✅ Название обновлено: «{title}».")
 
 
 @dp.callback_query(F.data.startswith("shop_ed_price:"))
@@ -1695,7 +1748,7 @@ async def on_shop_edit_price_ask(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(ShopAdminForm.editing_price)
     await state.update_data(edit_product_id=pid)
     if callback.message:
-        await callback.message.answer("Введи новую цену товара в рублях:")
+        await callback.message.answer("💰 Введи новую цену товара в рублях:")
     await callback.answer()
 
 
@@ -1719,7 +1772,7 @@ async def on_shop_edit_price_save(message: types.Message, state: FSMContext):
     if isinstance(pid, int) and pid in shop_products:
         shop_products[pid]["price"] = price_str
         save_state()
-        await message.answer(f"Цена обновлена: {price_str} ₽.")
+        await message.answer(f"✅ Цена обновлена: {price_str} ₽.")
 
 
 @dp.callback_query(F.data.startswith("shop_ed_desc:"))
@@ -1734,7 +1787,7 @@ async def on_shop_edit_desc_ask(callback: types.CallbackQuery, state: FSMContext
     await state.set_state(ShopAdminForm.editing_description)
     await state.update_data(edit_product_id=pid)
     if callback.message:
-        await callback.message.answer("Введи новое описание товара:")
+        await callback.message.answer("📝 Введи новое описание товара:")
     await callback.answer()
 
 
@@ -1752,7 +1805,7 @@ async def on_shop_edit_desc_save(message: types.Message, state: FSMContext):
     if isinstance(pid, int) and pid in shop_products:
         shop_products[pid]["description"] = desc
         save_state()
-        await message.answer("Описание товара обновлено.")
+        await message.answer("✅ Описание товара обновлено.")
 
 
 @dp.callback_query(F.data.startswith("shop_ed_photo:"))
@@ -1767,7 +1820,7 @@ async def on_shop_edit_photo_ask(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(ShopAdminForm.editing_photo)
     await state.update_data(edit_product_id=pid)
     if callback.message:
-        await callback.message.answer("Отправь новую фотографию товара:")
+        await callback.message.answer("🖼 Отправь новую фотографию товара:")
     await callback.answer()
 
 
@@ -1782,14 +1835,14 @@ async def on_shop_edit_photo_save(message: types.Message, state: FSMContext):
     if isinstance(pid, int) and pid in shop_products:
         shop_products[pid]["photo_id"] = photo_id
         save_state()
-        await message.answer("Фотография товара обновлена.")
+        await message.answer("✅ Фотография товара обновлена.")
 
 
 @dp.message(ShopAdminForm.editing_photo)
 async def on_shop_edit_photo_invalid(message: types.Message):
     if not message.from_user or not is_shop_admin(message.from_user.id):
         return
-    await message.answer("Нужно отправить именно фото.")
+    await message.answer("🖼 Нужно отправить именно фото.")
 
 
 @dp.callback_query(F.data.startswith(("shop_st_oos:", "shop_st_avail:")))
@@ -1805,9 +1858,11 @@ async def on_shop_toggle_stock(callback: types.CallbackQuery):
         return
     prod["in_stock"] = action == "shop_st_avail"
     save_state()
-    status_txt = "В наличии" if prod["in_stock"] else "Нет в наличии"
+    status_txt = "✅ В наличии" if prod["in_stock"] else "❌ Нет в наличии"
     if callback.message:
-        await callback.message.answer(f"Статус наличия для «{prod['title']}»: {status_txt}.")
+        await callback.message.answer(
+            f"Статус наличия для «{prod['title']}»: {status_txt}."
+        )
     await callback.answer()
 
 
@@ -1824,7 +1879,11 @@ async def on_shop_toggle_visibility(callback: types.CallbackQuery):
         return
     prod["hidden"] = action == "shop_vis_hide"
     save_state()
-    vis_txt = "скрыт из каталога" if prod["hidden"] else "снова отображается в каталоге"
+    vis_txt = (
+        "🙈 скрыт из каталога"
+        if prod["hidden"]
+        else "👁 снова отображается в каталоге"
+    )
     if callback.message:
         await callback.message.answer(f"Товар «{prod['title']}» {vis_txt}.")
     await callback.answer()
@@ -1842,8 +1901,8 @@ async def on_shop_delete_ask(callback: types.CallbackQuery):
         return
     if callback.message:
         await callback.message.answer(
-            f"Ты точно решил это сделать? Пальцы опять работают быстрее мозга?\n\n"
-            f"Удалить товар «{prod['title']}» (ID #{pid})?",
+            "Ты точно решил это сделать? Пальцы опять работают быстрее мозга?\n\n"
+            f"🗑 Удалить товар «{prod['title']}» (ID #{pid})?",
             reply_markup=build_confirm_keyboard(
                 confirm_cb=f"shop_del_yes:{pid}",
                 back_cb=f"shop_del_no:{pid}",
@@ -1872,7 +1931,7 @@ async def on_shop_delete_yes(callback: types.CallbackQuery):
     save_state()
     if callback.message:
         title = prod["title"] if prod else f"ID #{pid}"
-        await callback.message.answer(f"Товар «{title}» удалён.")
+        await callback.message.answer(f"🗑 Товар «{title}» удалён.")
     await callback.answer()
 
 
@@ -1913,7 +1972,7 @@ async def on_shop_adm_orders(callback: types.CallbackQuery):
         return
     if not shop_orders:
         await callback.message.answer(
-            "Заказов пока нет.", reply_markup=build_shop_admin_keyboard()
+            "🧾 Заказов пока нет.", reply_markup=build_shop_admin_keyboard()
         )
         await callback.answer()
         return
@@ -1953,7 +2012,7 @@ async def on_shop_order_status_change(callback: types.CallbackQuery):
 
     if callback.message:
         await callback.message.answer(
-            f"Статус заказа #{oid} обновлён: {new_status}"
+            f"✅ Статус заказа #{oid} обновлён: {new_status}"
         )
 
     await notify_shop_admins(
@@ -2025,7 +2084,7 @@ async def create_and_dispatch_report(
     report_counter += 1
     rep_id = report_counter
     reason_label, high_priority = REPORT_REASONS.get(
-        reason_key, ("? Другая причина", False)
+        reason_key, ("❓ Другая причина", False)
     )
     created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
     pair_msgs = chat_history.get(get_pair_key(reporter_id, target_id), [])
@@ -2046,43 +2105,43 @@ async def create_and_dispatch_report(
     }
     save_state()
     for admin_id in ADMIN_IDS:
-        prio_tag = "ПРИОРИТЕТНАЯ ПРОВЕРКА\n" if high_priority else ""
+        prio_tag = "🚨 ПРИОРИТЕТНАЯ ПРОВЕРКА\n" if high_priority else ""
         admin_text = (
-            "MODERATION PANEL\n"
+            "🛡 MODERATION PANEL\n"
             f"{prio_tag}"
-            "Новая жалоба\n"
+            "📩 Новая жалоба\n"
             f"Жалоба №{rep_id}\n"
-            f"На кого: ID {target_id}\n"
-            f"Кто пожаловался: ID {reporter_id}\n"
-            f"Причина: {reason_label}\n"
-            f"Дата: {created_at}\n"
-            f"Комментарий: {comment or 'не добавлен'}"
+            f"• На кого: ID {target_id}\n"
+            f"• Кто пожаловался: ID {reporter_id}\n"
+            f"• Причина: {reason_label}\n"
+            f"• Дата: {created_at}\n"
+            f"• Комментарий: {comment or 'не добавлен'}"
         )
         mod_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Проверить материалы",
+                        text="🔎 Проверить материалы",
                         callback_data=f"mod_inspect:{rep_id}",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="! Выдать предупреждение",
+                        text="⚠️ Выдать предупреждение",
                         callback_data=f"mod_warn:{rep_id}",
                     ),
                     InlineKeyboardButton(
-                        text="Временно ограничить аккаунт",
+                        text="⏳ Временно ограничить аккаунт",
                         callback_data=f"mod_limit:{rep_id}",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Заблокировать аккаунт",
+                        text="🚫 Заблокировать аккаунт",
                         callback_data=f"mod_ban:{rep_id}",
                     ),
                     InlineKeyboardButton(
-                        text="Отклонить жалобу",
+                        text="🗑 Отклонить жалобу",
                         callback_data=f"mod_reject:{rep_id}",
                     ),
                 ],
@@ -2098,19 +2157,19 @@ async def create_and_dispatch_report(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Заблокировать тоже",
+                    text="🚫 Заблокировать тоже",
                     callback_data=f"blk_after_rep:{target_id}",
                 ),
                 InlineKeyboardButton(
-                    text="Нет, пока оставим",
+                    text="👌 Нет, пока оставим",
                     callback_data="blk_skip_after_rep",
                 ),
             ]
         ]
     )
     await message.answer(
-        f"Жалоба №{rep_id} принята и передана модерации.\n\n"
-        "ЕЩЁ ОДИН МОМЕНТ\n"
+        f"✅ Жалоба №{rep_id} принята и передана модерации.\n\n"
+        "⚡️ ЕЩЁ ОДИН МОМЕНТ\n"
         "Хочешь, чтобы этот персонаж больше не появлялся в твоей жизни?",
         reply_markup=block_prompt_kb,
     )
@@ -2131,7 +2190,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             save_state()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Погнали, я в деле", callback_data="reg_start")]
+            [InlineKeyboardButton(text="🔥 Погнали, я в деле", callback_data="reg_start")]
         ]
     )
     await message.answer("Дарова, начнешь?)", reply_markup=keyboard)
@@ -2148,15 +2207,15 @@ async def cmd_krk(message: types.Message):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=KRK_SITE_TITLE,
+                    text=f"🔗 {KRK_SITE_TITLE}",
                     url=KRK_SITE_URL,
                 )
             ]
         ]
     )
     await message.answer(
-        "Дополнительный материал\n"
-        "Открыто\n\n"
+        "📂 Дополнительный материал\n"
+        "🔓 Открыто\n\n"
         f"{KRK_SITE_TITLE}\n"
         "Дополнительный ресурс",
         reply_markup=keyboard,
@@ -2174,8 +2233,8 @@ async def on_reg_start(callback: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Девушка", callback_data="gender_f"),
-                InlineKeyboardButton(text="Парень", callback_data="gender_m"),
+                InlineKeyboardButton(text="💃 Девушка", callback_data="gender_f"),
+                InlineKeyboardButton(text="🕺 Парень", callback_data="gender_m"),
             ]
         ]
     )
@@ -2231,10 +2290,14 @@ async def on_city(message: types.Message, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Девушку", callback_data="seek_f"),
-                InlineKeyboardButton(text="Парня", callback_data="seek_m"),
+                InlineKeyboardButton(text="💃 Девушку", callback_data="seek_f"),
+                InlineKeyboardButton(text="🕺 Парня", callback_data="seek_m"),
             ],
-            [InlineKeyboardButton(text="Без разницы", callback_data="seek_any")],
+            [
+                InlineKeyboardButton(
+                    text="🎲 Без разницы", callback_data="seek_any"
+                )
+            ],
         ]
     )
     await message.answer("Кого ищешь / какие интересы?", reply_markup=keyboard)
@@ -2266,7 +2329,7 @@ async def on_bio(message: types.Message, state: FSMContext):
         return
     await state.update_data(bio=bio)
     await state.set_state(RegForm.waiting_photo)
-    await message.answer("Скинь своё фото для анкеты:")
+    await message.answer("📸 Скинь своё фото для анкеты:")
 
 
 @dp.message(RegForm.waiting_photo, F.photo)
@@ -2298,7 +2361,7 @@ async def on_photo(message: types.Message, state: FSMContext):
 
 @dp.message(RegForm.waiting_photo)
 async def on_photo_invalid(message: types.Message):
-    await message.answer("Нужно отправить именно картинку/фото, а не текст.")
+    await message.answer("📸 Нужно отправить именно картинку/фото, а не текст.")
 
 
 @dp.message(Command("me"))
@@ -2307,7 +2370,7 @@ async def cmd_me(message: types.Message):
     profile = profiles.get(user_id) if user_id is not None else None
     if not profile:
         await message.answer(
-            "Твой козырь пока пуст — сначала заполни анкету через /start."
+            "🃏 Твой козырь пока пуст — сначала заполни анкету через /start."
         )
         return
     await message.answer_photo(
@@ -2379,7 +2442,7 @@ async def on_swipe(callback: types.CallbackQuery):
             save_state()
             target_profile = profiles.get(target_id, {})
             await callback.message.answer(
-                f"Взаимка с {target_profile.get('name', 'пользователем')}!"
+                f"💘 Взаимка с {target_profile.get('name', 'пользователем')}!"
             )
             await enter_anon_chat(callback.message, viewer_id, target_id)
         else:
@@ -2388,15 +2451,15 @@ async def on_swipe(callback: types.CallbackQuery):
                 extra_likes[viewer_id] = bonus_left - 1
                 save_state()
                 await callback.message.answer(
-                    f"Лайк отправлен (доп. лайков осталось: {extra_likes[viewer_id]})"
+                    f"❤️ Лайк отправлен (доп. лайков осталось: {extra_likes[viewer_id]})"
                 )
             else:
                 save_state()
-                await callback.message.answer("Лайк отправлен")
+                await callback.message.answer("❤️ Лайк отправлен")
     else:
         skipped_history.setdefault(viewer_id, []).append(target_id)
         save_state()
-        await callback.message.answer("Пропущено")
+        await callback.message.answer("👎 Пропущено")
     next_id = get_next_candidate_id(viewer_id)
     if next_id is None:
         await send_no_candidates_prompt(callback.message, viewer_id)
@@ -2436,7 +2499,7 @@ async def on_use_undo_skip(callback: types.CallbackQuery):
     seen_profiles.setdefault(uid, set()).discard(restored_id)
     save_state()
     await callback.message.answer(
-        f"Возвращаю последнюю пропущенную анкету. Осталось откатов: {undo_credits[uid]}."
+        f"↩️ Возвращаю последнюю пропущенную анкету. Осталось откатов: {undo_credits[uid]}."
     )
     await send_candidate(callback.message, uid, restored_id)
     await callback.answer()
@@ -2457,7 +2520,7 @@ async def on_peek_view(callback: types.CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Лайкнуть в ответ",
+                    text="❤️ Лайкнуть в ответ",
                     callback_data=f"peek_like_back:{target_id}",
                 )
             ]
@@ -2467,7 +2530,7 @@ async def on_peek_view(callback: types.CallbackQuery):
         photo=prof["photo_id"],
         caption=format_profile_caption(
             prof,
-            header="Лайкнул(а)",
+            header="💘 Лайкнул(а)",
             user_id=target_id,
             viewer_id=callback.from_user.id,
         ),
@@ -2495,11 +2558,11 @@ async def on_peek_like_back(callback: types.CallbackQuery):
         active_chats[target_id] = viewer_id
         save_state()
         target_name = profiles[target_id].get("name", "пользователем")
-        await callback.message.answer(f"Взаимка с {target_name}!")
+        await callback.message.answer(f"💘 Взаимка с {target_name}!")
         await enter_anon_chat(callback.message, viewer_id, target_id)
     else:
         save_state()
-        await callback.message.answer("Лайк отправлен.")
+        await callback.message.answer("❤️ Лайк отправлен.")
     await callback.answer()
 
 
@@ -2510,7 +2573,7 @@ async def on_safety_menu(callback: types.CallbackQuery):
         return
     target_id = int(callback.data.split(":", 1)[1])
     await callback.message.answer(
-        "ЧТО-ТО ПОШЛО НЕ ТАК?\n"
+        "🚨 ЧТО-ТО ПОШЛО НЕ ТАК?\n"
         "Если этот человек ведёт себя как последнее недоразумение — сообщи нам.",
         reply_markup=build_safety_keyboard(target_id),
     )
@@ -2532,7 +2595,7 @@ async def on_report_start(callback: types.CallbackQuery):
         for key, (label, _) in REPORT_REASONS.items()
     ]
     await callback.message.answer(
-        "НА ЧТО ЖАЛУЕМСЯ?",
+        "🚨 НА ЧТО ЖАЛУЕМСЯ?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await callback.answer()
@@ -2551,13 +2614,13 @@ async def on_report_reason(callback: types.CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Отправить без комментария", callback_data="rep_skip_comment"
+                    text="⏭ Отправить без комментария", callback_data="rep_skip_comment"
                 )
             ]
         ]
     )
     await callback.message.answer(
-        "Хочешь добавить комментарий к жалобе? Напиши текст или нажми кнопку ниже.",
+        "💬 Хочешь добавить комментарий к жалобе? Напиши текст или нажми кнопку ниже.",
         reply_markup=kb,
     )
     await callback.answer()
@@ -2604,7 +2667,7 @@ async def on_block_direct(callback: types.CallbackQuery):
     target_id = int(callback.data.split(":", 1)[1])
     apply_block(callback.from_user.id, target_id)
     await callback.message.answer(
-        "Пользователь заблокирован. Анкеты скрыты, переписка и обмен контактами закрыты."
+        "🚫 Пользователь заблокирован. Анкеты скрыты, переписка и обмен контактами закрыты."
     )
     await callback.answer()
 
@@ -2617,7 +2680,7 @@ async def on_block_after_report(callback: types.CallbackQuery):
     target_id = int(callback.data.split(":", 1)[1])
     apply_block(callback.from_user.id, target_id)
     await callback.message.answer(
-        "Персонаж заблокирован. В твоей ленте и переписках он больше не появится."
+        "🚫 Персонаж заблокирован. В твоей ленте и переписках он больше не появится."
     )
     await callback.answer()
 
@@ -2625,7 +2688,7 @@ async def on_block_after_report(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "blk_skip_after_rep")
 async def on_skip_block_after_report(callback: types.CallbackQuery):
     if callback.message:
-        await callback.message.answer("Хорошо, блокировать пока не будем.")
+        await callback.message.answer("👌 Хорошо, блокировать пока не будем.")
     await callback.answer()
 
 
@@ -2635,7 +2698,7 @@ async def cmd_sos(message: types.Message, state: FSMContext):
         return
     await state.set_state(SosForm.waiting_message)
     await message.answer(
-        "ЭКСТРЕННАЯ СВЯЗЬ С МОДЕРАЦИЕЙ\n"
+        "🆘 ЭКСТРЕННАЯ СВЯЗЬ С МОДЕРАЦИЕЙ\n"
         "Опиши ситуацию, требующую немедленного вмешательства (угрозы, шантаж, "
         "безопасность), и я передам её модераторам."
     )
@@ -2662,15 +2725,15 @@ async def on_sos_text(message: types.Message, state: FSMContext):
             await bot.send_message(
                 chat_id=admin_id,
                 text=(
-                    "ЭКСТРЕННЫЙ СИГНАЛ (/sos)\n"
-                    f"От пользователя: ID {message.from_user.id}\n"
-                    f"Время: {entry['time']}\n"
-                    f"Сообщение: {text}"
+                    "🆘 ЭКСТРЕННЫЙ СИГНАЛ (/sos)\n"
+                    f"• От пользователя: ID {message.from_user.id}\n"
+                    f"• Время: {entry['time']}\n"
+                    f"• Сообщение: {text}"
                 ),
             )
         except Exception:
             pass
-    await message.answer("Экстренное обращение отправлено модерации.")
+    await message.answer("✅ Экстренное обращение отправлено модерации.")
 
 
 @dp.message(Command("mod"))
@@ -2680,45 +2743,45 @@ async def cmd_mod_panel(message: types.Message):
     pending = [r for r in reports_by_id.values() if r.get("status") == "pending"]
     pending.sort(key=lambda r: (not r.get("high_priority"), r["id"]))
     if not pending:
-        await message.answer("MODERATION PANEL\nОткрытых жалоб в очереди нет.")
+        await message.answer("🛡 MODERATION PANEL\nОткрытых жалоб в очереди нет.")
         return
-    await message.answer(f"MODERATION PANEL\nЖалоб в очереди: {len(pending)}")
+    await message.answer(f"🛡 MODERATION PANEL\nЖалоб в очереди: {len(pending)}")
     for r in pending[:5]:
-        prio = "ПРИОРИТЕТ\n" if r.get("high_priority") else ""
+        prio = "🚨 ПРИОРИТЕТ\n" if r.get("high_priority") else ""
         text = (
             f"{prio}"
-            f"Жалоба №{r['id']}\n"
-            f"На кого: ID {r['target_id']}\n"
-            f"Кто пожаловался: ID {r['reporter_id']}\n"
-            f"Причина: {r['reason_label']}\n"
-            f"Дата: {r['created_at']}\n"
-            f"Комментарий: {r['comment']}"
+            f"📩 Жалоба №{r['id']}\n"
+            f"• На кого: ID {r['target_id']}\n"
+            f"• Кто пожаловался: ID {r['reporter_id']}\n"
+            f"• Причина: {r['reason_label']}\n"
+            f"• Дата: {r['created_at']}\n"
+            f"• Комментарий: {r['comment']}"
         )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Проверить материалы",
+                        text="🔎 Проверить материалы",
                         callback_data=f"mod_inspect:{r['id']}",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="! Выдать предупреждение",
+                        text="⚠️ Выдать предупреждение",
                         callback_data=f"mod_warn:{r['id']}",
                     ),
                     InlineKeyboardButton(
-                        text="Временно ограничить аккаунт",
+                        text="⏳ Временно ограничить аккаунт",
                         callback_data=f"mod_limit:{r['id']}",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Заблокировать аккаунт",
+                        text="🚫 Заблокировать аккаунт",
                         callback_data=f"mod_ban:{r['id']}",
                     ),
                     InlineKeyboardButton(
-                        text="Отклонить жалобу",
+                        text="🗑 Отклонить жалобу",
                         callback_data=f"mod_reject:{r['id']}",
                     ),
                 ],
@@ -2744,7 +2807,7 @@ async def on_mod_inspect(callback: types.CallbackQuery):
     target_id = rep["target_id"]
     prof = profiles.get(target_id)
     prof_text = (
-        format_profile_caption(prof, header=f"Анкета ID {target_id}", user_id=target_id)
+        format_profile_caption(prof, header=f"🪪 Анкета ID {target_id}", user_id=target_id)
         if prof
         else f"Анкета ID {target_id} отсутствует в памяти."
     )
@@ -2755,10 +2818,10 @@ async def on_mod_inspect(callback: types.CallbackQuery):
     ]
     msgs_block = "\n".join(msgs_lines) if msgs_lines else "Сообщений в буфере нет."
     await callback.message.answer(
-        f"Материалы по жалобе №{rep_id}\n"
-        f"Предупреждений у ID {target_id}: {warns}\n\n"
+        f"🔎 Материалы по жалобе №{rep_id}\n"
+        f"⚠️ Предупреждений у ID {target_id}: {warns}\n\n"
         f"{prof_text}\n\n"
-        f"Последние сообщения:\n{msgs_block}"
+        f"💬 Последние сообщения:\n{msgs_block}"
     )
     await callback.answer()
 
@@ -2785,31 +2848,33 @@ async def on_mod_decision(callback: types.CallbackQuery):
     if action == "mod_warn":
         user_warnings[target_id] = user_warnings.get(target_id, 0) + 1
         rep["status"] = "warned"
-        verdict_label = f"Выдано предупреждение (всего: {user_warnings[target_id]})."
+        verdict_label = (
+            f"⚠️ Выдано предупреждение (всего: {user_warnings[target_id]})."
+        )
     elif action == "mod_limit":
         user_restrictions[target_id] = {
             "until": time.time() + 24 * 60 * 60,
             "banned": False,
         }
         rep["status"] = "limited"
-        verdict_label = "Аккаунт временно ограничен на 24 часа."
+        verdict_label = "⏳ Аккаунт временно ограничен на 24 часа."
     elif action == "mod_ban":
         user_restrictions[target_id] = {
             "until": time.time() + 10 * 365 * 24 * 60 * 60,
             "banned": True,
         }
         rep["status"] = "banned"
-        verdict_label = "Аккаунт заблокирован."
+        verdict_label = "🚫 Аккаунт заблокирован."
     else:
         rep["status"] = "rejected"
-        verdict_label = "Жалоба отклонена."
+        verdict_label = "🗑 Жалоба отклонена."
     save_state()
     await callback.message.answer(f"Жалоба №{rep_id}: {verdict_label}")
     try:
         await bot.send_message(
             chat_id=reporter_id,
             text=(
-                "ТВОЯ ЖАЛОБА РАССМОТРЕНА.\n"
+                "🛡 ТВОЯ ЖАЛОБА РАССМОТРЕНА.\n"
                 "Модерация проверила обращение. Спасибо, что помог нам сделать это "
                 "место безопаснее.\n"
                 "Мы не раскрываем личность заявителя и подробности дисциплинарных мер.\n"
@@ -2866,11 +2931,11 @@ async def on_match_delete_ask(callback: types.CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Да, удалить взаимку",
+                    text="🗑 Да, удалить взаимку",
                     callback_data=f"match_del_yes:{target_id}",
                 ),
                 InlineKeyboardButton(
-                    text="Отмена", callback_data=f"match_view:{target_id}"
+                    text="⬅️ Отмена", callback_data=f"match_view:{target_id}"
                 ),
             ]
         ]
@@ -2927,7 +2992,7 @@ async def on_contact_request_send(callback: types.CallbackQuery):
     }
     save_state()
     await callback.message.answer(
-        "Ну всё, романтик хренов, решил раскрыть карты?\n"
+        "💌 Ну всё, романтик хренов, решил раскрыть карты?\n"
         "Твой запрос отправлен. Теперь ждём, согласится ли это чудо узнать тебя "
         "поближе.\n"
         "Не нервничай, ёбаный Купидон."
@@ -2936,11 +3001,11 @@ async def on_contact_request_send(callback: types.CallbackQuery):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Да, чёрт возьми",
+                    text="💘 Да, чёрт возьми",
                     callback_data=f"contact_resp_yes:{requester_id}",
                 ),
                 InlineKeyboardButton(
-                    text="Нет, иди нахуй",
+                    text="🙅‍♂️ Нет, иди нахуй",
                     callback_data=f"contact_resp_no:{requester_id}",
                 ),
             ]
@@ -2950,7 +3015,7 @@ async def on_contact_request_send(callback: types.CallbackQuery):
         await bot.send_message(
             chat_id=target_id,
             text=(
-                "ТУТ КТО-ТО ВЛЮБИЛСЯ?\n"
+                "💘 ТУТ КТО-ТО ВЛЮБИЛСЯ?\n"
                 "Твой собеседник хочет обменяться с тобой Telegram-контактами.\n"
                 "Кажется, анонимности ему уже недостаточно, чёртов романтик.\n"
                 "Раскрываем карты?"
@@ -2980,7 +3045,7 @@ async def on_contact_request_cancel(callback: types.CallbackQuery):
         return
     req["status"] = "canceled"
     save_state()
-    await callback.message.answer("Запрос на обмен контактами аннулирован.")
+    await callback.message.answer("↩️ Запрос на обмен контактами аннулирован.")
     await callback.answer()
 
 
@@ -3011,7 +3076,7 @@ async def on_contact_response(callback: types.CallbackQuery):
             await bot.send_message(
                 chat_id=requester_id,
                 text=(
-                    "Упс, романтик.\n"
+                    "💔 Упс, романтик.\n"
                     "Твой собеседник пока не готов раскрывать карты.\n"
                     "Не расстраивайся, маленький ебанько. Продолжайте свою анонимную "
                     "любовную хуйню.\n"
@@ -3033,7 +3098,7 @@ async def on_contact_response(callback: types.CallbackQuery):
         (requester_id, target_contact),
     ):
         text = (
-            "НУ ВСЁ, ВЫ ДВА БЕЗНАДЁЖНЫХ.\n"
+            "🥂 НУ ВСЁ, ВЫ ДВА БЕЗНАДЁЖНЫХ.\n"
             "Кажется, анонимность закончилась, а ваша любовная катастрофа выходит на "
             "новый уровень.\n"
             f"Держите контакты друг друга: {partner_contact}.\n"
@@ -3054,7 +3119,7 @@ async def on_contact_response(callback: types.CallbackQuery):
 @dp.message(Command("donate"))
 async def cmd_donate(message: types.Message):
     await message.answer(
-        "Выбирай, за что сегодня отдаёшь свои кровные:",
+        "⭐️ Выбирай, за что сегодня отдаёшь свои кровные:",
         reply_markup=build_donate_keyboard(),
     )
 
@@ -3137,45 +3202,45 @@ async def on_successful_payment(message: types.Message):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Вернуть последнюю пропущенную анкету",
+                        text="↩️ Вернуть последнюю пропущенную анкету",
                         callback_data="use_undo_skip",
                     )
                 ]
             ]
         )
         await message.answer(
-            f"Оплата прошла! Начислен откат дизлайка (доступно: {undo_credits[uid]}).",
+            f"✅ Оплата прошла! Начислен откат дизлайка (доступно: {undo_credits[uid]}).",
             reply_markup=kb,
         )
     elif payment.invoice_payload == "buy_extra_likes":
         extra_likes[uid] = extra_likes.get(uid, 0) + EXTRA_LIKES_PACK_SIZE
         save_state()
         await message.answer(
-            f"Оплата прошла! Начислено +{EXTRA_LIKES_PACK_SIZE} доп. лайков "
+            f"✅ Оплата прошла! Начислено +{EXTRA_LIKES_PACK_SIZE} доп. лайков "
             f"(всего доступно: {extra_likes[uid]}). Запускай /find!"
         )
     elif payment.invoice_payload == "buy_boost":
         boosted_until[uid] = time.time() + BOOST_DURATION_SEC
         save_state()
         await message.answer(
-            "Оплата прошла! Твоя анкета поднята в топ выдачи на 24 часа."
+            "✅ Оплата прошла! Твоя анкета поднята в топ выдачи на 24 часа."
         )
     elif payment.invoice_payload == "buy_vip_30d":
         vip_until[uid] = time.time() + VIP_DURATION_SEC
         save_state()
-        await message.answer("Оплата прошла! VIP активирован на 30 дней.")
+        await message.answer("✅ Оплата прошла! VIP активирован на 30 дней.")
     elif payment.invoice_payload == "buy_support_donation":
         supporter_donations[uid] = (
             supporter_donations.get(uid, 0) + payment.total_amount
         )
         save_state()
         await message.answer(
-            f"Оплата прошла! Спасибо за поддержку ({payment.total_amount} звёзд). "
+            f"✅ Оплата прошла! Спасибо за поддержку ({payment.total_amount} звёзд). "
             "Можешь выбрать титул в анкете через /donate."
         )
     elif payment.invoice_payload == "buy_peek_likes":
         await message.answer(
-            "Оплата прошла! Открываю список тех, кто тебя лайкнул:"
+            "✅ Оплата прошла! Открываю список тех, кто тебя лайкнул:"
         )
         await send_incoming_likes_list(message, uid)
 
@@ -3201,30 +3266,34 @@ async def on_don_support(callback: types.CallbackQuery):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"Задонатить {SUPPORT_STARS_AMOUNT} звёзд",
+                        text=f"⭐️ Задонатить {SUPPORT_STARS_AMOUNT} звёзд",
                         callback_data="pay_support_50",
                     )
                 ],
-                [InlineKeyboardButton(text="Грешник", callback_data="title_sinner")],
                 [
                     InlineKeyboardButton(
-                        text="Покровитель тьмы", callback_data="title_patron"
+                        text="😈 Грешник", callback_data="title_sinner"
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Спонсор чужой любви", callback_data="title_sponsor"
+                        text="🖤 Покровитель тьмы", callback_data="title_patron"
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Без титула в профиле", callback_data="title_clear"
+                        text="💸 Спонсор чужой любви", callback_data="title_sponsor"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🚫 Без титула в профиле", callback_data="title_clear"
                     )
                 ],
             ]
         )
         await callback.message.answer(
-            "Поддержать проект просто потому что можешь, чёртов меценат. "
+            "⭐️ Поддержать проект просто потому что можешь, чёртов меценат. "
             "Можно закинуть звёзд или выбрать титул по желанию:",
             reply_markup=keyboard,
         )
@@ -3263,7 +3332,7 @@ async def on_title_select(callback: types.CallbackQuery):
         chosen = DONATE_TITLES[callback.data]
         user_titles[uid] = chosen
         save_state()
-        await callback.message.answer(f"Выбран титул: {chosen}.")
+        await callback.message.answer(f"🏷 Выбран титул: {chosen}.")
     await callback.answer()
 
 
@@ -3285,14 +3354,14 @@ async def on_open_general_chat(callback: types.CallbackQuery):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Зайти в «место сбора странных»",
+                        text="💬 Зайти в «место сбора странных»",
                         url=GENERAL_CHAT_URL,
                     )
                 ]
             ]
         )
         await callback.message.answer(
-            "ОБЩИЙ ЧАТ\n"
+            "💬 ОБЩИЙ ЧАТ\n"
             "Хочешь пообщаться? Заходи к нам. Здесь можно познакомиться с новыми "
             "людьми, обсудить всё на свете и просто провести время.",
             reply_markup=kb,
@@ -3316,13 +3385,21 @@ async def on_flt_gender_menu(callback: types.CallbackQuery):
     if callback.message:
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="Только парней", callback_data="set_g_m")],
                 [
                     InlineKeyboardButton(
-                        text="Только девушек", callback_data="set_g_f"
+                        text="🕺 Только парней", callback_data="set_g_m"
                     )
                 ],
-                [InlineKeyboardButton(text="Всех подряд", callback_data="set_g_all")],
+                [
+                    InlineKeyboardButton(
+                        text="💃 Только девушек", callback_data="set_g_f"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🎲 Всех подряд", callback_data="set_g_all"
+                    )
+                ],
             ]
         )
         await callback.message.answer("Кого будем искать?", reply_markup=keyboard)
@@ -3365,7 +3442,7 @@ async def on_flt_age_menu(callback: types.CallbackQuery, state: FSMContext):
         ]
     )
     await callback.message.answer(
-        "Выбери диапазон или напиши свой текстом, например: 18-24",
+        "🎂 Выбери диапазон или напиши свой текстом, например: 18-24",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -3422,31 +3499,33 @@ async def on_flt_geo_menu(callback: types.CallbackQuery):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="Любой город", callback_data="set_city:any"),
                     InlineKeyboardButton(
-                        text="Только мой город", callback_data="set_city:my"
+                        text="🌍 Любой город", callback_data="set_city:any"
+                    ),
+                    InlineKeyboardButton(
+                        text="🏙 Только мой город", callback_data="set_city:my"
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Дистанция: Без ограничений",
+                        text="📏 Дистанция: Без ограничений",
                         callback_data="set_dist:any",
                     ),
                     InlineKeyboardButton(
-                        text=f"Поблизости (до {int(NEARBY_RADIUS_KM)} км)",
+                        text=f"📍 Поблизости (до {int(NEARBY_RADIUS_KM)} км)",
                         callback_data="set_dist:near",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Скинуть геолокацию",
+                        text="📍 Скинуть геолокацию",
                         callback_data="req_send_location",
                     )
                 ],
             ]
         )
         await callback.message.answer(
-            "Выбери город, дистанцию или отправь свою геолокацию:",
+            "📍 Выбери город, дистанцию или отправь свою геолокацию:",
             reply_markup=keyboard,
         )
     await callback.answer()
@@ -3458,7 +3537,7 @@ async def on_request_send_location(callback: types.CallbackQuery):
         await callback.answer()
         return
     await callback.message.answer(
-        "Нажми кнопку ниже, чтобы скинуть свою геолокацию, "
+        "📍 Нажми кнопку ниже, чтобы скинуть свою геолокацию, "
         "или отправь её через скрепку в чате.\n"
         "Точные координаты другим пользователям не показываются — только примерное расстояние.",
         reply_markup=build_location_request_keyboard(),
@@ -3466,7 +3545,7 @@ async def on_request_send_location(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(F.text == "Отмена")
+@dp.message(F.text == "❌ Отмена")
 async def on_cancel_location_kb(message: types.Message):
     if not message.from_user:
         return
@@ -3493,7 +3572,7 @@ async def on_user_location(message: types.Message):
     }
     save_state()
     await message.answer(
-        "Геолокация сохранена. Теперь в анкетах будет видна примерная дистанция, "
+        "📍 Геолокация сохранена. Теперь в анкетах будет видна примерная дистанция, "
         f"а в режиме «Поблизости» — подбор в радиусе {int(NEARBY_RADIUS_KM)} км.",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -3532,7 +3611,7 @@ async def on_set_dist(callback: types.CallbackQuery):
         save_state()
         if uid not in user_locations:
             await callback.message.answer(
-                f"Выбран режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)». "
+                f"📍 Выбран режим «Поблизости (до {int(NEARBY_RADIUS_KM)} км)». "
                 "Скинь свою геолокацию, чтобы я мог считать расстояние до других:",
                 reply_markup=build_location_request_keyboard(),
             )
@@ -3559,7 +3638,7 @@ async def on_flt_expand_age(callback: types.CallbackQuery):
     f["age_max"] = min(99, max(f["age_max"] + 5, 30))
     save_state()
     await callback.message.answer(
-        f"Диапазон расширен до {f['age_min']}-{f['age_max']} лет."
+        f"🎂 Диапазон расширен до {f['age_min']}-{f['age_max']} лет."
     )
     candidate_id = get_next_candidate_id(callback.from_user.id)
     if candidate_id is None:
@@ -3577,7 +3656,7 @@ async def on_flt_any_city(callback: types.CallbackQuery):
     f = get_user_filter(callback.from_user.id)
     f["city_mode"] = "any"
     save_state()
-    await callback.message.answer("Теперь поиск по любому городу.")
+    await callback.message.answer("🌍 Теперь поиск по любому городу.")
     candidate_id = get_next_candidate_id(callback.from_user.id)
     if candidate_id is None:
         await send_no_candidates_prompt(callback.message, callback.from_user.id)
@@ -3605,7 +3684,7 @@ async def on_flt_save(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user and callback.message:
         save_state()
         await callback.message.answer(
-            "Изменения сохранены. Запускай /find — дальше подбираю по ним."
+            "💾 Изменения сохранены. Запускай /find — дальше подбираю по ним."
         )
     await callback.answer()
 
@@ -3630,7 +3709,7 @@ async def on_anon_message(message: types.Message, state: FSMContext):
     try:
         await bot.send_message(
             chat_id=partner_id,
-            text=f"Анонимно:\n{msg_text}",
+            text=f"💬 Анонимно:\n{msg_text}",
         )
     except Exception:
         await message.answer("Не удалось доставить сообщение собеседнику.")
