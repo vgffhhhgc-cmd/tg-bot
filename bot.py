@@ -6,6 +6,7 @@ import math
 import os
 import threading
 import time
+import urllib.parse
 import urllib.request
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
