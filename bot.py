@@ -6,6 +6,7 @@ import math
 import os
 import threading
 import time
+import urllib.request
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -20,6 +21,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+
 
 TOKEN = os.environ.get("BOT_TOKEN", "9153210051:AAHE_03kRXkYpXhhb9oxmkZoa0XcKiW3nEg")
 CONTACT_REQUEST_TTL = 24 * 60 * 60
@@ -37,6 +39,7 @@ STORAGE_CHANNEL_ID = os.environ.get("STORAGE_CHANNEL_ID", "").strip()
 # Твой Telegram ID для доступа в /mod и админку магазина «💸 Слив»
 ADMIN_IDS: set[int] = {5220461940}
 
+
 SHOP_REQUISITES = "2201 9604 2731 7498"
 SHOP_DELIVERY_NOTICE = (
     "⚠️ По поводу доставки\n"
@@ -52,13 +55,16 @@ SHOP_ORDER_TERMS = (
     "• Сроки обработки: заказ проверяется и обрабатывается после поступления подтверждения оплаты."
 )
 
+
 SHOP_STATUS_PENDING = "🟡 Ожидает проверки"
 SHOP_STATUS_PAID = "🟢 Оплачен"
 SHOP_STATUS_REJECTED = "🔴 Отклонён"
 SHOP_STATUS_CANCELED = "⚪ Отменён"
 
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
 
 profiles: dict[int, dict] = {}
 seen_profiles: dict[int, set[int]] = {}
@@ -84,17 +90,20 @@ user_warnings: dict[int, int] = {}
 user_restrictions: dict[int, dict] = {}
 sos_requests: list[dict] = []
 
+
 # Состояние модуля магазина «💸 Слив»
 shop_products: dict[int, dict] = {}
 shop_product_counter: int = 0
 shop_orders: dict[int, dict] = {}
 shop_order_counter: int = 5000
 
+
 DONATE_TITLES = {
     "title_sinner": "😈 Грешник",
     "title_patron": "🖤 Покровитель тьмы",
     "title_sponsor": "💸 Спонсор чужой любви",
 }
+
 
 REPORT_REASONS = {
     "rep_insult": ("🤬 Оскорбления и травля", False),
@@ -164,6 +173,73 @@ def is_shop_admin(user_id: int | None) -> bool:
     return user_id is not None and user_id in ADMIN_IDS
 
 
+def _backup_shop_to_channel(payload: dict) -> None:
+    if not STORAGE_CHANNEL_ID:
+        return
+    try:
+        shop_data = json.dumps(
+            {
+                "shop_products": payload.get("shop_products", {}),
+                "shop_product_counter": payload.get("shop_product_counter", 0),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        boundary = "----ShopBackupBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="chat_id"\r\n\r\n{STORAGE_CHANNEL_ID}\r\n'
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="document"; filename="shop.json"\r\n'
+            f"Content-Type: application/json\r\n\r\n"
+        ).encode("utf-8") + shop_data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{TOKEN}/sendDocument",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception:
+        pass
+
+
+def _restore_shop_from_channel() -> None:
+    global shop_product_counter
+    if not STORAGE_CHANNEL_ID or shop_products:
+        return
+    try:
+        url = (
+            f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+            "?limit=20&allowed_updates=%5B%22channel_post%22%5D"
+        )
+        res = json.loads(urllib.request.urlopen(url, timeout=10).read().decode("utf-8"))
+        for upd in reversed(res.get("result", [])):
+            post = upd.get("channel_post") or {}
+            if str(post.get("chat", {}).get("id", "")) == str(STORAGE_CHANNEL_ID):
+                doc = post.get("document") or {}
+                if doc.get("file_name") == "shop.json" and doc.get("file_id"):
+                    f_info = json.loads(
+                        urllib.request.urlopen(
+                            f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={doc['file_id']}",
+                            timeout=10,
+                        ).read().decode("utf-8")
+                    )
+                    f_path = (f_info.get("result") or {}).get("file_path")
+                    if f_path:
+                        raw = urllib.request.urlopen(
+                            f"https://api.telegram.org/file/bot{TOKEN}/{f_path}",
+                            timeout=10,
+                        ).read().decode("utf-8")
+                        parsed = json.loads(raw)
+                        for k, v in parsed.get("shop_products", {}).items():
+                            if str(k).lstrip("-").isdigit() and isinstance(v, dict):
+                                shop_products[int(k)] = v
+                        if parsed.get("shop_product_counter") is not None:
+                            shop_product_counter = int(parsed["shop_product_counter"])
+                        break
+    except Exception:
+        pass
+
+
 def save_state() -> None:
     try:
         payload = {
@@ -199,6 +275,7 @@ def save_state() -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, STATE_FILE_PATH)
+        _backup_shop_to_channel(payload)
     except Exception:
         pass
 
@@ -206,11 +283,13 @@ def save_state() -> None:
 def load_state() -> None:
     global report_counter, shop_product_counter, shop_order_counter
     if not os.path.exists(STATE_FILE_PATH):
+        _restore_shop_from_channel()
         return
     try:
         with open(STATE_FILE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            _restore_shop_from_channel()
             return
         for k, v in data.get("profiles", {}).items():
             if k.lstrip("-").isdigit() and isinstance(v, dict):
@@ -292,8 +371,10 @@ def load_state() -> None:
                 shop_orders[int(k)] = v
         if isinstance(data.get("shop_order_counter"), int):
             shop_order_counter = data["shop_order_counter"]
+        if not shop_products:
+            _restore_shop_from_channel()
     except Exception:
-        pass
+        _restore_shop_from_channel()
 
 
 def calc_distance_km(user_a: int, user_b: int) -> float | None:
@@ -525,14 +606,17 @@ def is_mutual_match_criteria(viewer_id: int, candidate_id: int) -> bool:
 def keepalive() -> None:
     port = int(os.environ.get("PORT", 10000))
 
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok")
 
+
         def log_message(self, format: str, *args) -> None:
             return
+
 
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
@@ -1372,6 +1456,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
         await message.answer("📄 Нужно прикрепить именно PDF-файл подтверждения оплаты.")
         return
 
+
     data = await state.get_data()
     await state.clear()
     pid = data.get("order_product_id")
@@ -1381,6 +1466,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
         await message.answer("Товар больше не найден. Оформление прервано.")
         return
 
+
     shop_order_counter += 1
     order_id = shop_order_counter
     created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -1388,6 +1474,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
     username = message.from_user.username
     if buyer_id in profiles and username:
         profiles[buyer_id]["username"] = username
+
 
     order = {
         "id": order_id,
@@ -1404,6 +1491,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
     }
     shop_orders[order_id] = order
     save_state()
+
 
     buyer_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1422,6 +1510,7 @@ async def on_shop_payment_pdf(message: types.Message, state: FSMContext):
         f"📎 Файл оплаты получен: {file_name}",
         reply_markup=buyer_kb,
     )
+
 
     await notify_shop_admins(
         f"🛒 Новый заказ\n"
@@ -2010,14 +2099,17 @@ async def on_shop_order_status_change(callback: types.CallbackQuery):
     order["status"] = new_status
     save_state()
 
+
     if callback.message:
         await callback.message.answer(
             f"✅ Статус заказа #{oid} обновлён: {new_status}"
         )
 
+
     await notify_shop_admins(
         f"💰 Изменение статуса оплаты\n\n{format_order_summary(order)}"
     )
+
 
     buyer_id = order.get("buyer_id")
     if isinstance(buyer_id, int):
